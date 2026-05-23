@@ -1,6 +1,6 @@
-import { stripAnsi, isRateLimited, findRateLimitMessage } from './patterns.js';
+import { stripAnsi, isRateLimited, findRateLimitMessage, hasRateLimitOptionsMenu, hasSessionResumeMenu } from './patterns.js';
 import { parseResetTime, calculateWaitMs } from './time-parser.js';
-import { capturePane, sendKeys, getPaneCommand, isProcessForeground } from './tmux.js';
+import { capturePane, sendKeys, sendEnter, sendLiteral, getPaneCommand, isProcessForeground } from './tmux.js';
 import { loadConfig } from './config.js';
 import { createLogger } from './logger.js';
 
@@ -26,6 +26,13 @@ export async function processOneTick(state, tmuxAdapter, pane, config, isAlive) 
 
   const raw = await tmuxAdapter.capturePane(pane, 20);
   const stripped = stripAnsi(raw);
+
+  if (config.sessionResumeOption && hasSessionResumeMenu(stripped)) {
+    await tmuxAdapter.sendLiteral(pane, String(config.sessionResumeOption));
+    await new Promise(r => setTimeout(r, 300));
+    await tmuxAdapter.sendEnter(pane);
+    return 'session-resumed';
+  }
 
   if (state.status === 'waiting') {
     if (Date.now() < state.waitUntil) return 'waiting';
@@ -80,6 +87,10 @@ export async function processOneTick(state, tmuxAdapter, pane, config, isAlive) 
     state._sigBeforeSend = paneSignature(stripped);
     state.attempts++;
     state.waitUntil = Date.now() + 30_000;
+    if (hasRateLimitOptionsMenu(stripped)) {
+      await tmuxAdapter.sendEnter(pane);
+      await new Promise(r => setTimeout(r, 500));
+    }
     await tmuxAdapter.sendKeys(pane, config.retryMessage);
     return 'retried';
   }
@@ -117,7 +128,7 @@ export async function startMonitor(pane, pid) {
 
   await logger.info(`Monitor started for pane ${pane} (claude PID: ${pid})`);
 
-  const tmuxAdapter = { capturePane, sendKeys, getPaneCommand, isClaudeForeground: () => isProcessForeground(pid) };
+  const tmuxAdapter = { capturePane, sendKeys, sendEnter, sendLiteral, getPaneCommand, isClaudeForeground: () => isProcessForeground(pid) };
   const isAlive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
   const loop = async () => {
@@ -131,6 +142,7 @@ export async function startMonitor(pane, pid) {
         await logger.info(`Rate limit detected: "${state.lastRateLimitMessage}". Waiting ${secs}s...`);
         state.lastRateLimitMessage = null;
       }
+      if (result === 'session-resumed') await logger.info(`Auto-selected session resume option ${config.sessionResumeOption}`);
       if (result === 'retried') await logger.info(`Sent retry message (attempt ${state.attempts})`);
       if (result === 'user-continued') await logger.info('User already continued. Attempt counter reset.');
       if (result === 'max-retries') await logger.warn(`Max retries (${config.maxRetries}) reached. Monitor still active but will not send further retries until rate limit clears.`);

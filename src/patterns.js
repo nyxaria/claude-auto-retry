@@ -70,6 +70,25 @@ export function isRateLimited(text, customPatterns = []) {
   return false;
 }
 
+export function hasRateLimitOptionsMenu(text) {
+  const stripped = stripAnsi(text);
+  return /Stop and wait for limit to reset/i.test(stripped)
+    && /Enter to confirm/i.test(stripped);
+}
+
+export function hasSessionResumeMenu(text) {
+  const stripped = stripAnsi(text);
+  return /Resume from summary/i.test(stripped)
+    && /Resume full session/i.test(stripped)
+    && /Enter to confirm/i.test(stripped);
+}
+
+export function parseSessionResumeCurrentOption(text) {
+  const stripped = stripAnsi(text);
+  const match = stripped.match(/❯\s*(\d)\./);
+  return match ? parseInt(match[1], 10) : null;
+}
+
 export function findRateLimitMessage(text, customPatterns = []) {
   const lines = stripAnsi(text).split('\n');
 

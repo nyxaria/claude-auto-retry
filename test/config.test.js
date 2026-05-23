@@ -10,6 +10,7 @@ describe('DEFAULT_CONFIG', () => {
     assert.equal(DEFAULT_CONFIG.fallbackWaitHours, 5);
     assert.equal(typeof DEFAULT_CONFIG.retryMessage, 'string');
     assert.deepEqual(DEFAULT_CONFIG.customPatterns, []);
+    assert.equal(DEFAULT_CONFIG.sessionResumeOption, 2);
   });
 });
 
@@ -62,6 +63,50 @@ describe('loadConfig', () => {
     try {
       const config = await loadConfig(f);
       assert.deepEqual(config.customPatterns, ["valid"]);
+    } finally { await unlink(f); }
+  });
+  it('accepts valid sessionResumeOption values', async () => {
+    const { writeFile, unlink } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const f = join(tmpdir(), `car-test-${Date.now()}.json`);
+    await writeFile(f, JSON.stringify({ sessionResumeOption: 1 }));
+    try {
+      const config = await loadConfig(f);
+      assert.equal(config.sessionResumeOption, 1);
+    } finally { await unlink(f); }
+  });
+  it('accepts sessionResumeOption: 3', async () => {
+    const { writeFile, unlink } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const f = join(tmpdir(), `car-test-${Date.now()}.json`);
+    await writeFile(f, JSON.stringify({ sessionResumeOption: 3 }));
+    try {
+      const config = await loadConfig(f);
+      assert.equal(config.sessionResumeOption, 3);
+    } finally { await unlink(f); }
+  });
+  it('accepts sessionResumeOption: null to disable', async () => {
+    const { writeFile, unlink } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const f = join(tmpdir(), `car-test-${Date.now()}.json`);
+    await writeFile(f, JSON.stringify({ sessionResumeOption: null }));
+    try {
+      const config = await loadConfig(f);
+      assert.equal(config.sessionResumeOption, null);
+    } finally { await unlink(f); }
+  });
+  it('rejects invalid sessionResumeOption and falls back to default', async () => {
+    const { writeFile, unlink } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const f = join(tmpdir(), `car-test-${Date.now()}.json`);
+    await writeFile(f, JSON.stringify({ sessionResumeOption: 5 }));
+    try {
+      const config = await loadConfig(f);
+      assert.equal(config.sessionResumeOption, 2);
     } finally { await unlink(f); }
   });
   it('rejects negative numbers and falls back to defaults', async () => {

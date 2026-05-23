@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { stripAnsi, isRateLimited, findRateLimitMessage } from '../src/patterns.js';
+import { stripAnsi, isRateLimited, findRateLimitMessage, hasSessionResumeMenu, parseSessionResumeCurrentOption } from '../src/patterns.js';
 
 describe('stripAnsi', () => {
   it('removes bold codes', () => {
@@ -142,5 +142,84 @@ describe('stripAnsi (OSC sequences)', () => {
   it('rate limit detection works through OSC hyperlinks', () => {
     const input = '\x1b]8;;link\x1b\\5-hour limit reached\x1b]8;;\x1b\\ - resets 3pm';
     assert.ok(isRateLimited(input));
+  });
+});
+
+describe('hasSessionResumeMenu', () => {
+  const REAL_MENU = [
+    '──────────────────────────────────────────────────────────────────────────',
+    '  This session is 4h 22m old and 131.3k tokens.',
+    '',
+    '  Resuming the full session will consume a substantial portion of your usage limits. We recommend resuming from a',
+    '  summary.',
+    '',
+    '    1. Resume from summary (recommended)',
+    '  ❯ 2. Resume full session as-is',
+    '    3. Don\'t ask me again',
+    '',
+    '  Enter to confirm · Esc to cancel',
+  ].join('\n');
+
+  it('detects the real session resume menu', () => {
+    assert.ok(hasSessionResumeMenu(REAL_MENU));
+  });
+
+  it('detects with just the key phrases', () => {
+    assert.ok(hasSessionResumeMenu('Resume from summary\nResume full session\nEnter to confirm'));
+  });
+
+  it('returns false for normal output', () => {
+    assert.equal(hasSessionResumeMenu('I can help you with that code'), false);
+  });
+
+  it('returns false for empty string', () => {
+    assert.equal(hasSessionResumeMenu(''), false);
+  });
+
+  it('returns false for rate limit text', () => {
+    assert.equal(hasSessionResumeMenu("You've hit your limit · resets 3pm (UTC)"), false);
+  });
+
+  it('detects menu with ANSI codes', () => {
+    const text = '\x1b[1mResume from summary\x1b[0m\nResume full session\nEnter to confirm';
+    assert.ok(hasSessionResumeMenu(text));
+  });
+});
+
+describe('parseSessionResumeCurrentOption', () => {
+  it('parses option 2 when cursor is on it', () => {
+    const text = [
+      '    1. Resume from summary (recommended)',
+      '  ❯ 2. Resume full session as-is',
+      '    3. Don\'t ask me again',
+    ].join('\n');
+    assert.equal(parseSessionResumeCurrentOption(text), 2);
+  });
+
+  it('parses option 1 when cursor is on it', () => {
+    const text = [
+      '  ❯ 1. Resume from summary (recommended)',
+      '    2. Resume full session as-is',
+      '    3. Don\'t ask me again',
+    ].join('\n');
+    assert.equal(parseSessionResumeCurrentOption(text), 1);
+  });
+
+  it('parses option 3 when cursor is on it', () => {
+    const text = [
+      '    1. Resume from summary (recommended)',
+      '    2. Resume full session as-is',
+      '  ❯ 3. Don\'t ask me again',
+    ].join('\n');
+    assert.equal(parseSessionResumeCurrentOption(text), 3);
+  });
+
+  it('returns null when no cursor found', () => {
+    const text = [
+      '    1. Resume from summary (recommended)',
+      '    2. Resume full session as-is',
+      '    3. Don\'t ask me again',
+    ].join('\n');
+    assert.equal(parseSessionResumeCurrentOption(text), null);
   });
 });

@@ -9,6 +9,7 @@ export const DEFAULT_CONFIG = {
   fallbackWaitHours: 5,
   retryMessage: 'Continue where you left off. The previous attempt was rate limited.',
   customPatterns: [],
+  sessionResumeOption: 2,
 };
 
 const CONFIG_PATH = join(homedir(), '.claude-auto-retry.json');
@@ -32,6 +33,16 @@ function validate(cfg) {
       if (typeof p !== 'string') return false;
       try { new RegExp(p); return true; } catch { return false; }
     });
+  }
+  if (cfg.sessionResumeOption === null || cfg.sessionResumeOption === false) {
+    cfg.sessionResumeOption = null;
+  } else if (
+    typeof cfg.sessionResumeOption !== 'number'
+    || !Number.isInteger(cfg.sessionResumeOption)
+    || cfg.sessionResumeOption < 1
+    || cfg.sessionResumeOption > 3
+  ) {
+    cfg.sessionResumeOption = DEFAULT_CONFIG.sessionResumeOption;
   }
   if (cfg.foregroundCommands !== undefined) {
     if (!Array.isArray(cfg.foregroundCommands) || cfg.foregroundCommands.length === 0) {
