@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { stripAnsi, isRateLimited, findRateLimitMessage, hasSessionResumeMenu, parseSessionResumeCurrentOption } from '../src/patterns.js';
+import { stripAnsi, isRateLimited, findRateLimitMessage, hasRateLimitOptionsMenu, hasSessionResumeMenu, parseSessionResumeCurrentOption } from '../src/patterns.js';
 
 describe('stripAnsi', () => {
   it('removes bold codes', () => {
@@ -59,6 +59,9 @@ describe('isRateLimited', () => {
   });
   it('detects "usage limit · resets in: 3 hours"', () => {
     assert.equal(isRateLimited('usage limit · resets in: 3 hours'), true);
+  });
+  it('detects "hit your session limit" (real Claude Code message)', () => {
+    assert.equal(isRateLimited("You've hit your session limit · resets in: 3 hours"), true);
   });
 });
 
@@ -142,6 +145,45 @@ describe('stripAnsi (OSC sequences)', () => {
   it('rate limit detection works through OSC hyperlinks', () => {
     const input = '\x1b]8;;link\x1b\\5-hour limit reached\x1b]8;;\x1b\\ - resets 3pm';
     assert.ok(isRateLimited(input));
+  });
+});
+
+describe('hasRateLimitOptionsMenu', () => {
+  it('detects the rate-limit options menu', () => {
+    const text = [
+      '❯ /rate-limit-options',
+      '',
+      '──────────────────────────────────',
+      '  What do you want to do?',
+      '',
+      '  ❯ 1. Stop and wait for limit to reset',
+      '    2. Upgrade your plan',
+      '    3. Upgrade to Team plan',
+      '',
+      '  Enter to confirm · Esc to cancel',
+    ].join('\n');
+    assert.ok(hasRateLimitOptionsMenu(text));
+  });
+
+  it('detects with just the key phrases', () => {
+    assert.ok(hasRateLimitOptionsMenu('Stop and wait for limit to reset\nEnter to confirm'));
+  });
+
+  it('returns false for normal rate limit text without menu', () => {
+    assert.equal(hasRateLimitOptionsMenu("You've hit your limit · resets 3pm (UTC)"), false);
+  });
+
+  it('returns false for normal output', () => {
+    assert.equal(hasRateLimitOptionsMenu('I can help you with that code'), false);
+  });
+
+  it('returns false for empty string', () => {
+    assert.equal(hasRateLimitOptionsMenu(''), false);
+  });
+
+  it('detects menu with ANSI codes', () => {
+    const text = '\x1b[1mStop and wait for limit to reset\x1b[0m\nEnter to confirm · Esc to cancel';
+    assert.ok(hasRateLimitOptionsMenu(text));
   });
 });
 
