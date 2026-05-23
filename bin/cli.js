@@ -207,19 +207,37 @@ async function cmdVersion() {
 // --- Main ---
 const command = process.argv[2];
 
+function printUsage() {
+  console.log('claude-auto-retry - Auto-retry Claude Code on subscription rate limits\n');
+  console.log('Usage:');
+  console.log('  claude-auto-retry [claude-args...]   Run claude with auto-retry');
+  console.log('  claude-auto-retry install            Install shell wrapper + tmux');
+  console.log('  claude-auto-retry uninstall          Remove shell wrapper');
+  console.log('  claude-auto-retry status             Show monitor status');
+  console.log('  claude-auto-retry logs               Tail today\'s log');
+  console.log('  claude-auto-retry version            Print version');
+  console.log('  claude-auto-retry help               Print this help');
+}
+
 switch (command) {
   case 'install': await cmdInstall(); break;
   case 'uninstall': await cmdUninstall(); break;
   case 'status': await cmdStatus(); break;
   case 'logs': await cmdLogs(); break;
   case 'version': case '--version': case '-v': await cmdVersion(); break;
-  default:
-    console.log('claude-auto-retry - Auto-retry Claude Code on subscription rate limits\n');
-    console.log('Usage:');
-    console.log('  claude-auto-retry install     Install shell wrapper + tmux');
-    console.log('  claude-auto-retry uninstall   Remove shell wrapper');
-    console.log('  claude-auto-retry status      Show monitor status');
-    console.log('  claude-auto-retry logs        Tail today\'s log');
-    console.log('  claude-auto-retry version     Print version');
+  case 'help': case '--help': case '-h': printUsage(); break;
+  case undefined: printUsage(); break;
+  default: {
+    // Forward all args to the launcher (which spawns claude and monitors for rate limits).
+    // This lets `claude-auto-retry --dangerously-skip-permissions` work without needing
+    // the shell-function wrapper that `install` writes into ~/.bashrc.
+    const child = spawn('node', [LAUNCHER_PATH, ...process.argv.slice(2)], {
+      stdio: 'inherit',
+    });
+    child.on('exit', (code, signal) => {
+      if (signal) process.kill(process.pid, signal);
+      else process.exit(code ?? 0);
+    });
     break;
+  }
 }
