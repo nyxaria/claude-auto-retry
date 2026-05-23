@@ -3,6 +3,9 @@ import { parseResetTime, calculateWaitMs } from './time-parser.js';
 import { capturePane, sendKeys, sendEnter, sendLiteral, getPaneCommand, isProcessForeground } from './tmux.js';
 import { loadConfig } from './config.js';
 import { createLogger } from './logger.js';
+import { readFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const DEFAULT_FOREGROUND_COMMANDS = ['node', 'claude', 'npx', 'tsx', 'bun', 'deno'];
 
@@ -126,7 +129,12 @@ export async function startMonitor(pane, pid) {
   let consecutiveErrors = 0;
   const MAX_CONSECUTIVE_ERRORS = 10;
 
-  await logger.info(`Monitor started for pane ${pane} (claude PID: ${pid})`);
+  let version = 'unknown';
+  try {
+    const pkg = JSON.parse(await readFile(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf-8'));
+    version = pkg.version;
+  } catch {}
+  await logger.info(`claude-auto-retry v${version} — monitor started for pane ${pane} (claude PID: ${pid})`);
 
   const tmuxAdapter = { capturePane, sendKeys, sendEnter, sendLiteral, getPaneCommand, isClaudeForeground: () => isProcessForeground(pid) };
   const isAlive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
