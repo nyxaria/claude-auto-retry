@@ -1,5 +1,5 @@
 const RESET_TIME_REGEX = /resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:\(([^)]+)\))?/i;
-const RELATIVE_TIME_REGEX = /(?:try again|wait|resets?\s+in)[:\s]\s*(?:for\s+)?(?:in\s+)?(\d+)\s*(hours?|minutes?|mins?|h|m)\b/i;
+const RELATIVE_TIME_REGEX = /(?:try again|wait|resets?\s+in)[:\s]\s*(?:for\s+)?(?:in\s+)?(\d+\s*(?:hours?|minutes?|mins?|h|m)\s*(?:\d+\s*(?:hours?|minutes?|mins?|h|m))?)\b/i;
 
 export function parseResetTime(text) {
   // Try absolute time first: "resets at 3pm (UTC)"
@@ -17,13 +17,26 @@ export function parseResetTime(text) {
     return { hour, minute, timezone, ambiguous };
   }
 
-  // Try relative time: "try again in 5 minutes" / "wait 2 hours"
+  // Try relative time: "try again in 5 minutes" / "wait 2 hours" / "resets in 1h 25m"
   const relMatch = text.match(RELATIVE_TIME_REGEX);
   if (relMatch) {
-    const amount = parseInt(relMatch[1], 10);
-    const unit = relMatch[2].toLowerCase();
-    const isMinutes = unit.startsWith('m');
-    const ms = amount * (isMinutes ? 60_000 : 3_600_000);
+    const raw = relMatch[1];
+    const pairRegex = /(\d+)\s*(hours?|minutes?|mins?|h|m)/gi;
+    let ms = 0;
+    let match;
+    while ((match = pairRegex.exec(raw)) !== null) {
+      const amount = parseInt(match[1], 10);
+      const unit = match[2].toLowerCase();
+      const isMinutes = unit.startsWith('m');
+      ms += amount * (isMinutes ? 60_000 : 3_600_000);
+    }
+    // If regex matched but no pairs parsed (shouldn't happen), use first number as fallback
+    if (ms === 0) {
+      const fallback = raw.match(/(\d+)/);
+      if (fallback) {
+        ms = parseInt(fallback[1], 10) * 60_000;
+      }
+    }
     return { relative: true, waitMs: ms };
   }
 
@@ -90,6 +103,22 @@ export function calculateWaitMs(parsed, marginSeconds = 60, fallbackHours = 5, n
     return candidate;
   }
 
+  // Capture getTargetTimestamp's final candidate to avoid confusion with
+  // the local variable name below. getTargetTimestamp is called multiple
+  // times (ambiguous branch, and the final diff calc) so we capture the
+  // first call's result for the roll-back logic.
+  let todayReset = getTargetTimestamp(parsed.hour, parsed.minute);
+
+  // The iterative correction may converge on tomorrow's occurrence when
+  // the initial UTC guess (line 66) lands past midnight in the target
+  // timezone. This happens for all UTC+ zones (e.g. Europe/Warsaw UTC+2:
+  // "22:00Z" = 00:00 Warsaw → correction adds 22h → tomorrow's 10pm).
+  // Roll back one day if today's occurrence is still in the future.
+  const prevDay = todayReset - 86400_000;
+  if (prevDay > now.getTime()) {
+    todayReset = prevDay;
+  }
+
   if (parsed.ambiguous) {
     const t1 = getTargetTimestamp(parsed.hour, parsed.minute);
     const t2 = getTargetTimestamp(parsed.hour + 12, parsed.minute);
@@ -105,7 +134,7 @@ export function calculateWaitMs(parsed, marginSeconds = 60, fallbackHours = 5, n
     return Math.max(0, target) + marginSeconds * 1000;
   }
 
-  let diff = getTargetTimestamp(parsed.hour, parsed.minute) - now.getTime();
+  let diff = todayReset - now.getTime();
   if (diff < 0) diff += 86400_000; // tomorrow
 
   return diff + marginSeconds * 1000;

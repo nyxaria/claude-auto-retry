@@ -87,6 +87,22 @@ describe('findRateLimitMessage', () => {
     const text = '5-hour limit reached\nResets at 3pm (UTC)';
     assert.ok(findRateLimitMessage(text).includes('3pm'));
   });
+  it('returns the LAST reset line when multiple resets exist', () => {
+    // When rate limit persists across polls, each poll captures a new reset time
+    // The most recent (last) reset time is most accurate for wait calculation
+    const text = [
+      '5-hour limit reached - Your usage will reset in 1h 25m',
+      'try again in 48 minutes',
+      'try again in 45 minutes',
+      'try again in 39 minutes',
+    ].join('\n');
+    const result = findRateLimitMessage(text);
+    assert.ok(result.includes('39 minutes'), `Expected last reset time, got: ${result}`);
+  });
+  it('prefers reset lines over limit-only lines', () => {
+    const text = '5-hour limit reached - resets 3pm\ntry again in 5 minutes';
+    assert.ok(findRateLimitMessage(text).includes('5 minutes'));
+  });
 });
 
 describe('isRateLimited (multi-line TUI renders)', () => {
