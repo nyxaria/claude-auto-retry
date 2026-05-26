@@ -20,8 +20,10 @@ function paneSignature(stripped) {
   return lines.slice(-5).join('\n');
 }
 
+const STALE_GUARD_TIMEOUT_MS = 90_000;
+
 export function createMonitorState() {
-  return { status: 'monitoring', waitUntil: 0, attempts: 0, lastRateLimitMessage: null, _sigBeforeSend: null, _staleMsg: null, _staleSig: null };
+  return { status: 'monitoring', waitUntil: 0, attempts: 0, lastRateLimitMessage: null, _sigBeforeSend: null, _staleMsg: null, _staleSig: null, _staleAt: null };
 }
 
 export async function processOneTick(state, tmuxAdapter, pane, config, isAlive) {
@@ -48,6 +50,7 @@ export async function processOneTick(state, tmuxAdapter, pane, config, isAlive) 
     if (state._sigBeforeSend && paneSignature(stripped) !== state._sigBeforeSend) {
       state._staleMsg = findRateLimitMessage(stripped, config.customPatterns);
       state._staleSig = paneSignature(stripped);
+      state._staleAt = Date.now();
       state.status = 'monitoring';
       state.attempts = 0;
       state._sigBeforeSend = null;
@@ -107,22 +110,27 @@ export async function processOneTick(state, tmuxAdapter, pane, config, isAlive) 
 
     if (state._staleMsg && message === state._staleMsg
         && paneSignature(stripped) === state._staleSig) {
-      return 'monitoring';
+      if (state._staleAt && Date.now() - state._staleAt > STALE_GUARD_TIMEOUT_MS) {
+        state._staleMsg = null;
+        state._staleSig = null;
+        state._staleAt = null;
+      } else {
+        return 'monitoring';
+      }
     }
     state._staleMsg = null;
     state._staleSig = null;
 
     const parsed = message ? parseResetTime(message) : null;
-    const waitMs = calculateWaitMs(parsed, config.marginSeconds, config.fallbackWaitHours);
+    let waitMs = calculateWaitMs(parsed, config.marginSeconds, config.fallbackWaitHours);
 
-    // Stale-message guard: if an absolute reset time is already in the past,
-    // calculateWaitMs adds 24h and returns ~next-day waiting. That's almost
-    // never what we want — the Claude TUI keeps old "resets HH:MMam" lines
-    // in scrollback, and treating them as "tomorrow" makes the monitor sleep
-    // through the actual fresh rate limit. If the wait is suspiciously close
-    // to a full day, stay in monitoring and re-check on the next tick.
+    // If the reset time is already past, calculateWaitMs adds 24h and returns
+    // ~next-day waiting. Instead of sleeping that long, retry after a short
+    // delay — the limit should have cleared. This prevents the deadlock where
+    // the monitor loops in 'monitoring' forever on a genuinely active rate
+    // limit whose timestamp is stale.
     if (waitMs > 22 * 3600 * 1000) {
-      return 'monitoring';
+      waitMs = config.marginSeconds * 1000;
     }
 
     state.lastRateLimitMessage = message;

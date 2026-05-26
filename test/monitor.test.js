@@ -276,6 +276,58 @@ describe('processOneTick', () => {
     assert.equal(await processOneTick(s, t3, '%0', DEFAULT_CONFIG, () => true), 'waiting');
   });
 
+  it('retries when stale guard is active but pane has not changed for too long', async () => {
+    // Reproduces the deadlock: after a retry triggers "user-continued" via
+    // pane signature change, the stale guard blocks all future detection of
+    // the SAME rate-limit message if the pane never changes again (i.e. the
+    // retry didn't actually work and Claude is stuck).
+    const rateLimitText = '5-hour limit reached - resets 3pm (UTC)';
+    const afterRetryText = rateLimitText + '\n\nRetry message appeared\nPrompt line\nBottom';
+
+    // 1. Detect rate limit → waiting
+    const t1 = mockTmux(rateLimitText);
+    const s = createMonitorState();
+    assert.equal(await processOneTick(s, t1, '%0', DEFAULT_CONFIG, () => true), 'waiting');
+
+    // 2. Wait expires → send retry
+    s.waitUntil = Date.now() - 1000;
+    assert.equal(await processOneTick(s, t1, '%0', DEFAULT_CONFIG, () => true), 'retried');
+
+    // 3. Pane changed (retry text appeared) → user-continued, stale guard set
+    const t2 = mockTmux(afterRetryText);
+    s.waitUntil = Date.now() - 1000;
+    assert.equal(await processOneTick(s, t2, '%0', DEFAULT_CONFIG, () => true), 'user-continued');
+
+    // 4. Immediate next tick — stale guard fires, returns monitoring (expected)
+    assert.equal(await processOneTick(s, t2, '%0', DEFAULT_CONFIG, () => true), 'monitoring');
+
+    // 5. Time passes — stale guard should expire and allow re-detection
+    s._staleAt = Date.now() - 120_000; // 2 minutes ago
+    const result = await processOneTick(s, t2, '%0', DEFAULT_CONFIG, () => true);
+    assert.notEqual(result, 'monitoring', 'stale guard should expire after timeout');
+    assert.equal(result, 'waiting', 'should re-detect the active rate limit');
+  });
+
+  it('retries rate limit with past reset time instead of ignoring it', async () => {
+    // Reproduces the >22h guard deadlock: when the reset time is already past,
+    // calculateWaitMs returns ~24h, and the >22h guard returns 'monitoring'
+    // on every tick forever. The monitor should instead retry immediately
+    // since the limit should have cleared.
+    const pastLimitText = "You've hit your session limit · resets 9:10pm (UTC)";
+
+    const t = mockTmux(pastLimitText);
+    const s = createMonitorState();
+    const result = await processOneTick(s, t, '%0', DEFAULT_CONFIG, () => true);
+
+    // With a past reset time, the monitor should still transition to waiting
+    // with a short delay, NOT stay in monitoring forever
+    assert.equal(result, 'waiting', 'should enter waiting state even for past reset time');
+    // The wait should be short (not ~24h) — at most a few minutes
+    const waitSecs = (s.waitUntil - Date.now()) / 1000;
+    assert.ok(waitSecs < 300, `wait should be short, got ${waitSecs}s`);
+    assert.ok(waitSecs >= 0, `wait should be non-negative, got ${waitSecs}s`);
+  });
+
   it('auto-selects session resume during waiting state too', async () => {
     const menuText = [
       '  You\'ve hit your session limit · resets 9:20pm (UTC)',
