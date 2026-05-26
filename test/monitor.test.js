@@ -26,7 +26,7 @@ describe('processOneTick', () => {
     assert.equal(t._sent.length, 0);
   });
   it('enters waiting on rate limit', async () => {
-    const t = mockTmux('5-hour limit reached - resets 3pm (UTC)');
+    const t = mockTmux('Please try again in 5 hours');
     const s = createMonitorState();
     assert.equal(await processOneTick(s, t, '%0', DEFAULT_CONFIG, () => true), 'waiting');
     assert.ok(s.waitUntil > Date.now());
@@ -49,7 +49,7 @@ describe('processOneTick', () => {
     assert.ok(s.waitUntil > Date.now());
   });
   it('detects multi-line TUI rate limit', async () => {
-    const t = mockTmux('⚠ You\'ve hit your limit\n· resets 3pm (UTC)');
+    const t = mockTmux('⚠ You\'ve hit your limit\n· try again in 2 hours');
     const s = createMonitorState();
     assert.equal(await processOneTick(s, t, '%0', DEFAULT_CONFIG, () => true), 'waiting');
     assert.ok(s.waitUntil > Date.now());
@@ -192,6 +192,88 @@ describe('processOneTick', () => {
     assert.equal(await processOneTick(s, t, '%0', config, () => true), 'monitoring');
     assert.deepEqual(t._literals, []);
     assert.equal(t._enters, 0);
+  });
+
+  it('ignores stale rate-limit scrollback after user-continued via signature change', async () => {
+    const rateLimitText = 'Please try again in 5 hours';
+    const afterResumeText = rateLimitText + '\n\nClaude is responding now\nMore output here\nEven more';
+
+    // 1. Enter waiting state from rate limit
+    const t1 = mockTmux(rateLimitText);
+    const s = createMonitorState();
+    assert.equal(await processOneTick(s, t1, '%0', DEFAULT_CONFIG, () => true), 'waiting');
+
+    // 2. Expire wait and send retry
+    s.waitUntil = Date.now() - 1000;
+    assert.equal(await processOneTick(s, t1, '%0', DEFAULT_CONFIG, () => true), 'retried');
+
+    // 3. Pane changes (Claude responded) — triggers user-continued
+    const t2 = mockTmux(afterResumeText);
+    s.waitUntil = Date.now() - 1000;
+    assert.equal(await processOneTick(s, t2, '%0', DEFAULT_CONFIG, () => true), 'user-continued');
+
+    // 4. Next tick in monitoring — stale rate-limit text still visible but pane unchanged
+    assert.equal(await processOneTick(s, t2, '%0', DEFAULT_CONFIG, () => true), 'monitoring');
+  });
+
+  it('handles fresh rate limit after stale one is ignored', async () => {
+    const rateLimitText = 'Please try again in 5 hours';
+    const afterResumeText = rateLimitText + '\n\nClaude responding\nMore output\nEven more';
+    const freshRateLimitText = afterResumeText + '\n\nNew prompt\nPlease try again in 2 hours';
+
+    // Set up stale tracking via the full cycle
+    const t1 = mockTmux(rateLimitText);
+    const s = createMonitorState();
+    await processOneTick(s, t1, '%0', DEFAULT_CONFIG, () => true); // waiting
+    s.waitUntil = Date.now() - 1000;
+    await processOneTick(s, t1, '%0', DEFAULT_CONFIG, () => true); // retried
+    const t2 = mockTmux(afterResumeText);
+    s.waitUntil = Date.now() - 1000;
+    await processOneTick(s, t2, '%0', DEFAULT_CONFIG, () => true); // user-continued
+
+    // Stale text still there — should be skipped
+    assert.equal(await processOneTick(s, t2, '%0', DEFAULT_CONFIG, () => true), 'monitoring');
+
+    // Fresh rate limit with different message — should be detected
+    const t3 = mockTmux(freshRateLimitText);
+    assert.equal(await processOneTick(s, t3, '%0', DEFAULT_CONFIG, () => true), 'waiting');
+  });
+
+  it('handles same rate-limit message but changed pane signature as fresh', async () => {
+    const rateLimitText = 'Please try again in 5 hours';
+    const afterResumeText = rateLimitText + '\n\nClaude responding\nMore output\nEven more';
+    // Same rate-limit message but pane bottom changed (user typed something new)
+    const newPromptSameLimit = 'New user prompt here\nPlease try again in 5 hours\nSome other line\nAnother line\nBottom line';
+
+    const t1 = mockTmux(rateLimitText);
+    const s = createMonitorState();
+    await processOneTick(s, t1, '%0', DEFAULT_CONFIG, () => true); // waiting
+    s.waitUntil = Date.now() - 1000;
+    await processOneTick(s, t1, '%0', DEFAULT_CONFIG, () => true); // retried
+    const t2 = mockTmux(afterResumeText);
+    s.waitUntil = Date.now() - 1000;
+    await processOneTick(s, t2, '%0', DEFAULT_CONFIG, () => true); // user-continued
+
+    // Same message but different pane bottom — should be treated as fresh
+    const t3 = mockTmux(newPromptSameLimit);
+    assert.equal(await processOneTick(s, t3, '%0', DEFAULT_CONFIG, () => true), 'waiting');
+  });
+
+  it('does not set stale tracking when user-continued via rate limit clearing', async () => {
+    const rateLimitText = 'Please try again in 5 hours';
+
+    const t1 = mockTmux(rateLimitText);
+    const s = createMonitorState();
+    await processOneTick(s, t1, '%0', DEFAULT_CONFIG, () => true); // waiting
+    s.waitUntil = Date.now() - 1000;
+
+    // Rate limit cleared (no rate-limit text in pane)
+    const t2 = mockTmux('Claude is working normally');
+    assert.equal(await processOneTick(s, t2, '%0', DEFAULT_CONFIG, () => true), 'user-continued');
+
+    // New rate limit should be detected normally (no stale tracking active)
+    const t3 = mockTmux('Please try again in 5 hours');
+    assert.equal(await processOneTick(s, t3, '%0', DEFAULT_CONFIG, () => true), 'waiting');
   });
 
   it('auto-selects session resume during waiting state too', async () => {

@@ -21,7 +21,7 @@ function paneSignature(stripped) {
 }
 
 export function createMonitorState() {
-  return { status: 'monitoring', waitUntil: 0, attempts: 0, lastRateLimitMessage: null, _sigBeforeSend: null };
+  return { status: 'monitoring', waitUntil: 0, attempts: 0, lastRateLimitMessage: null, _sigBeforeSend: null, _staleMsg: null, _staleSig: null };
 }
 
 export async function processOneTick(state, tmuxAdapter, pane, config, isAlive) {
@@ -46,6 +46,8 @@ export async function processOneTick(state, tmuxAdapter, pane, config, isAlive) 
     // in scrollback after Claude resumes, so isRateLimited() would keep
     // returning true and the loop would resend the retry message every 30s.
     if (state._sigBeforeSend && paneSignature(stripped) !== state._sigBeforeSend) {
+      state._staleMsg = findRateLimitMessage(stripped, config.customPatterns);
+      state._staleSig = paneSignature(stripped);
       state.status = 'monitoring';
       state.attempts = 0;
       state._sigBeforeSend = null;
@@ -57,6 +59,8 @@ export async function processOneTick(state, tmuxAdapter, pane, config, isAlive) 
     if (!isRateLimited(stripped, config.customPatterns)) {
       state.status = 'monitoring'; state.attempts = 0;
       state._sigBeforeSend = null;
+      state._staleMsg = null;
+      state._staleSig = null;
       return 'user-continued';
     }
 
@@ -100,6 +104,14 @@ export async function processOneTick(state, tmuxAdapter, pane, config, isAlive) 
 
   if (isRateLimited(stripped, config.customPatterns)) {
     const message = findRateLimitMessage(stripped, config.customPatterns);
+
+    if (state._staleMsg && message === state._staleMsg
+        && paneSignature(stripped) === state._staleSig) {
+      return 'monitoring';
+    }
+    state._staleMsg = null;
+    state._staleSig = null;
+
     const parsed = message ? parseResetTime(message) : null;
     const waitMs = calculateWaitMs(parsed, config.marginSeconds, config.fallbackWaitHours);
 
