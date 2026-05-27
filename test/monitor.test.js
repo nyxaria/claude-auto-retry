@@ -328,6 +328,60 @@ describe('processOneTick', () => {
     assert.ok(waitSecs >= 0, `wait should be non-negative, got ${waitSecs}s`);
   });
 
+  it('immediately sends Continue on socket connection error', async () => {
+    const text = [
+      '● Now I have all the info I need.',
+      '  ⎿  API Error: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the',
+      '     second argument to fetch()',
+      '',
+      '✻ Sautéed for 1m 43s',
+    ].join('\n');
+    const t = mockTmux(text);
+    const s = createMonitorState();
+    assert.equal(await processOneTick(s, t, '%0', DEFAULT_CONFIG, () => true), 'connection-error-retried');
+    assert.equal(t._sent.length, 1);
+    assert.equal(t._sent[0], 'Continue');
+  });
+
+  it('does not double-send Continue if pane changed after connection error retry', async () => {
+    const errorText = [
+      'API Error: The socket connection was closed unexpectedly.',
+      '✻ Sautéed for 1m 43s',
+    ].join('\n');
+    const t1 = mockTmux(errorText);
+    const s = createMonitorState();
+    assert.equal(await processOneTick(s, t1, '%0', DEFAULT_CONFIG, () => true), 'connection-error-retried');
+
+    // Pane changed — Claude resumed
+    const t2 = mockTmux(errorText + '\n\nClaude is responding now\nMore output\nBottom');
+    assert.equal(await processOneTick(s, t2, '%0', DEFAULT_CONFIG, () => true), 'monitoring');
+  });
+
+  it('retries connection error again if pane has not changed (stuck)', async () => {
+    const errorText = [
+      'API Error: The socket connection was closed unexpectedly.',
+      '✻ Sautéed for 1m 43s',
+      'Bottom line here',
+    ].join('\n');
+    const t = mockTmux(errorText);
+    const s = createMonitorState();
+    assert.equal(await processOneTick(s, t, '%0', DEFAULT_CONFIG, () => true), 'connection-error-retried');
+
+    // Same pane content — but cooldown not expired
+    assert.equal(await processOneTick(s, t, '%0', DEFAULT_CONFIG, () => true), 'monitoring');
+
+    // Expire cooldown
+    s._connErrorCooldown = 0;
+    assert.equal(await processOneTick(s, t, '%0', DEFAULT_CONFIG, () => true), 'connection-error-retried');
+  });
+
+  it('detects overloaded API error and sends Continue', async () => {
+    const t = mockTmux('API Error: Overloaded\n✻ Worked for 2m');
+    const s = createMonitorState();
+    assert.equal(await processOneTick(s, t, '%0', DEFAULT_CONFIG, () => true), 'connection-error-retried');
+    assert.equal(t._sent.length, 1);
+  });
+
   it('auto-selects session resume during waiting state too', async () => {
     const menuText = [
       '  You\'ve hit your session limit · resets 9:20pm (UTC)',

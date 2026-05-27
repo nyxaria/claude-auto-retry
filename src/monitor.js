@@ -1,4 +1,4 @@
-import { stripAnsi, isRateLimited, findRateLimitMessage, hasRateLimitOptionsMenu, hasSessionResumeMenu } from './patterns.js';
+import { stripAnsi, isRateLimited, findRateLimitMessage, hasRateLimitOptionsMenu, hasSessionResumeMenu, hasConnectionError } from './patterns.js';
 import { parseResetTime, calculateWaitMs } from './time-parser.js';
 import { capturePane, sendKeys, sendEnter, sendLiteral, getPaneCommand, isProcessForeground } from './tmux.js';
 import { loadConfig } from './config.js';
@@ -23,7 +23,7 @@ function paneSignature(stripped) {
 const STALE_GUARD_TIMEOUT_MS = 90_000;
 
 export function createMonitorState() {
-  return { status: 'monitoring', waitUntil: 0, attempts: 0, lastRateLimitMessage: null, _sigBeforeSend: null, _staleMsg: null, _staleSig: null, _staleAt: null };
+  return { status: 'monitoring', waitUntil: 0, attempts: 0, lastRateLimitMessage: null, _sigBeforeSend: null, _staleMsg: null, _staleSig: null, _staleAt: null, _connErrorSig: null, _connErrorCooldown: 0 };
 }
 
 export async function processOneTick(state, tmuxAdapter, pane, config, isAlive) {
@@ -37,6 +37,26 @@ export async function processOneTick(state, tmuxAdapter, pane, config, isAlive) 
     await new Promise(r => setTimeout(r, 300));
     await tmuxAdapter.sendEnter(pane);
     return 'session-resumed';
+  }
+
+  if (hasConnectionError(stripped)) {
+    const sig = paneSignature(stripped);
+    if (state._connErrorSig && sig === state._connErrorSig && Date.now() < state._connErrorCooldown) {
+      return 'monitoring';
+    }
+    if (state._connErrorSig && sig !== state._connErrorSig) {
+      state._connErrorSig = null;
+      state._connErrorCooldown = 0;
+      return 'monitoring';
+    }
+    state._connErrorSig = sig;
+    state._connErrorCooldown = Date.now() + 30_000;
+    await tmuxAdapter.sendKeys(pane, 'Continue');
+    return 'connection-error-retried';
+  }
+  if (state._connErrorSig) {
+    state._connErrorSig = null;
+    state._connErrorCooldown = 0;
   }
 
   if (state.status === 'waiting') {
@@ -170,6 +190,7 @@ export async function startMonitor(pane, pid) {
         await logger.info(`Rate limit detected: "${state.lastRateLimitMessage}". Waiting ${secs}s...`);
         state.lastRateLimitMessage = null;
       }
+      if (result === 'connection-error-retried') await logger.info('API connection error detected — sent Continue immediately.');
       if (result === 'session-resumed') await logger.info(`Auto-selected session resume option ${config.sessionResumeOption}`);
       if (result === 'retried') await logger.info(`Sent retry message (attempt ${state.attempts})`);
       if (result === 'user-continued') await logger.info('User already continued. Attempt counter reset.');

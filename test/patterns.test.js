@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { stripAnsi, isRateLimited, findRateLimitMessage, hasRateLimitOptionsMenu, hasSessionResumeMenu, parseSessionResumeCurrentOption } from '../src/patterns.js';
+import { stripAnsi, isRateLimited, findRateLimitMessage, hasRateLimitOptionsMenu, hasSessionResumeMenu, parseSessionResumeCurrentOption, hasConnectionError } from '../src/patterns.js';
 
 describe('stripAnsi', () => {
   it('removes bold codes', () => {
@@ -225,6 +225,49 @@ describe('hasSessionResumeMenu', () => {
   it('detects menu with ANSI codes', () => {
     const text = '\x1b[1mResume from summary\x1b[0m\nResume full session\nEnter to confirm';
     assert.ok(hasSessionResumeMenu(text));
+  });
+});
+
+describe('hasConnectionError', () => {
+  it('detects the socket connection closed error', () => {
+    const text = 'API Error: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the\nsecond argument to fetch()';
+    assert.ok(hasConnectionError(text));
+  });
+
+  it('detects socket error embedded in TUI output', () => {
+    const text = [
+      '● Now I have all the info I need.',
+      '  ⎿  API Error: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the',
+      '     second argument to fetch()',
+      '',
+      '✻ Sautéed for 1m 43s',
+    ].join('\n');
+    assert.ok(hasConnectionError(text));
+  });
+
+  it('detects socket error with ANSI codes', () => {
+    const text = '\x1b[31mAPI Error: The socket connection was closed unexpectedly.\x1b[0m';
+    assert.ok(hasConnectionError(text));
+  });
+
+  it('detects generic connection error', () => {
+    assert.ok(hasConnectionError('API Error: Connection error. Please check your internet connection and try again.'));
+  });
+
+  it('detects overloaded error', () => {
+    assert.ok(hasConnectionError('API Error: Overloaded'));
+  });
+
+  it('returns false for normal output', () => {
+    assert.equal(hasConnectionError('I can help you with that code'), false);
+  });
+
+  it('returns false for empty string', () => {
+    assert.equal(hasConnectionError(''), false);
+  });
+
+  it('returns false for rate limit text', () => {
+    assert.equal(hasConnectionError("You've hit your limit · resets 3pm (UTC)"), false);
   });
 });
 

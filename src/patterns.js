@@ -89,6 +89,17 @@ export function parseSessionResumeCurrentOption(text) {
   return match ? parseInt(match[1], 10) : null;
 }
 
+const CONNECTION_ERROR_PATTERNS = [
+  /API Error:.*socket connection was closed/i,
+  /API Error:.*Connection error/i,
+  /API Error:.*Overloaded/i,
+];
+
+export function hasConnectionError(text) {
+  const stripped = stripAnsi(text);
+  return CONNECTION_ERROR_PATTERNS.some(p => p.test(stripped));
+}
+
 export function findRateLimitMessage(text, customPatterns = []) {
   const lines = stripAnsi(text).split('\n');
 
