@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A fallback wait is now corrected once the real reset time appears on screen.** The
+  `/rate-limit-options` menu does not always render a reset line, so confirming "Stop and
+  wait" could commit the `fallbackWaitHours` default (5h) — and the waiting branch returned
+  early on every tick and never looked at the pane again, so the banner Claude Code prints
+  immediately after confirming, which *does* carry the time, was ignored for the whole
+  fallback. Observed live: `resets 6:20pm` detected via the menu at 17:26, monitor parked
+  until 22:27 with `attempts: 0` while the banner sat on screen — ~4 hours of a
+  reset session sitting idle. The waiting branch now re-derives the wake-up from the live
+  banner each tick. Shorten-only (an unreadable screen re-derives the same multi-hour
+  fallback, and a banner drifting through the tail must never postpone the retry), and only
+  before the first send of an episode — afterwards the 30s cooldown and the max-retries
+  backoff are deliberately unrelated to the reset time and must own the pacing.
+
 ## [0.6.2] - 2026-07-29
 
 ### Fixed
