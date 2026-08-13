@@ -88,6 +88,18 @@ const CHROME_LINE = [
                                                      // ("Should I start the new task?")
   USAGE_CREDITS,                                     // live-limit companion hint (shared w/ the backstop)
   /^\s*[✻✢✽✳✴✶✷]\s/,                                 // status spinner ("✻ Brewed for …")
+  // Usage-meter statusline rows (#61, ccusage-style). The "⟳ resets in 1 hr 47 min"
+  // countdown matches RESET_PATTERNS and renders permanently at the very bottom, BELOW
+  // any live banner — so it must be furniture: it both hijacked findRateLimitMessage's
+  // bottom-up scan (an unparseable "1 hr 47 min" → 5h fallback instead of the banner's
+  // real time) and handed a free "resets" anchor to any limit-shaped prose near the
+  // bottom. Anchored to the meter shapes: the countdown glyph, a dotted gauge with a
+  // percentage, and the cost/duration row.
+  /[⟳↻⌛⏳🕐-🕧]\s*resets/iu,                          // meter reset countdown — glyph varies by
+                                                     // statusline layout/version ("⟳ resets in
+                                                     // 1 hr 47 min", "⌛ Resets at 15:00")
+  /[●○◐◓◑◒]{5,}\s*(?:ctx:)?\d+%/,                     // dotted usage gauge ("current ●●●●●●●●●● 100%")
+  /^\s*\$[\d.,]+\s+⏱/,                               // cost row ("$230.61 ⏱ 59h14m │ diff:+63 -16")
   /Backgrounded agent \(|to manage · /i,             // background-agent notice — the "(" (or "to manage ·")
                                                      // is required so prose ("Backgrounded agent finished
                                                      // the lint run") isn't stripped
@@ -462,24 +474,43 @@ export function isInternalRetry(text) {
     .some((l) => INTERNAL_RETRY_PATTERNS.some((p) => p.test(l)));
 }
 
-export function findRateLimitMessage(text, customPatterns = []) {
-  const lines = stripAnsi(text).split('\n');
+// tailLines > 0 bounds the scan to the same chrome-aware window isRateLimited uses. The
+// unbounded scan reaches the FULL capture, so any non-chrome, non-echo line anywhere in
+// ~120 lines that merely *looks* like a reset ("…try again in 2 minutes…" in model prose,
+// user-typed text, a wrapped tool result past the mask's continuation gap) wins the
+// bottom-up scan over the real banner. That was survivable while this ran once at
+// detection; the monitor now re-derives during the wait, where shorten-only means the
+// earliest bogus time wins and a *correct* multi-hour wait can collapse to minutes — the
+// monitor then wakes into the still-live limit and burns its retries before the real
+// reset. Callers that gate on isRateLimited must pass the same window it read. 0 keeps the
+// full scan for print mode, where the input is process output rather than a scrolling TUI.
+export function findRateLimitMessage(text, customPatterns = [], tailLines = 0) {
+  const all = stripAnsi(text).split('\n');
   // Tool-echo mask (#63): without it, a quoted "resets 9am" in a fresh grep line below a
   // real banner would win the bottom-up scan and be parsed instead of the banner.
-  const mask = toolEchoMask(lines);
+  // Chrome is skipped for the same reason (#61): a usage-meter statusline row
+  // ("⟳ resets in 1 hr 47 min") always renders below the banner, so it won the scan —
+  // and parseResetTime can't read it, turning a known reset time into the 5h fallback.
+  // The mask is computed over the FULL pane and sliced, so a block whose `● Name(` header
+  // sits above the window keeps its children masked (same discipline as isRateLimited).
+  const { start, end } = tailLines > 0 ? contentTailRange(all, tailLines)
+    : { start: 0, end: all.length };
+  const lines = all.slice(start, end);
+  const fullMask = toolEchoMask(all).slice(start, end);
+  const skip = (i) => fullMask[i] || isChromeLine(lines[i]);
 
   // Scan from the bottom up — the most recent "resets" line is the one to
   // parse. The Claude TUI never clears earlier rate-limit messages from
   // scrollback, so a forward scan would lock onto a stale line (e.g. an old
   // "resets 11:30am" lingering above a fresh "resets 4:30pm").
   for (let i = lines.length - 1; i >= 0; i--) {
-    if (mask[i]) continue;
+    if (skip(i)) continue;
     if (RESET_PATTERNS.some(p => p.test(lines[i]))) return lines[i].trim();
   }
 
   // Fallback: any "limit" line, also scanned from the bottom.
   for (let i = lines.length - 1; i >= 0; i--) {
-    if (mask[i]) continue;
+    if (skip(i)) continue;
     if (LIMIT_PATTERNS.some(p => p.test(lines[i]))) return lines[i].trim();
   }
 

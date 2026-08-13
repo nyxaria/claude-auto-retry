@@ -7,6 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A fallback wait is now corrected once the real reset time appears on screen.** The
+  `/rate-limit-options` menu does not always render a reset line, so confirming "Stop and
+  wait" could commit the `fallbackWaitHours` default (5h) — and the waiting branch returned
+  early on every tick and never looked at the pane again, so the banner Claude Code prints
+  immediately after confirming, which *does* carry the time, was ignored for the whole
+  fallback. Observed live: a session whose limit reset at 18:20 sat parked until 22:27 with
+  `attempts: 0`, ~4 idle hours, while the banner naming 18:20 was on screen the entire time.
+  A wait derived from an unreadable screen is now latched as a fallback and re-derived from
+  the live banner each tick until a real reset time is found; waits that already came from a
+  real reset time are never re-parsed. Confirming the menu starts a fresh retry episode, so
+  the correction still applies when the menu re-renders after a retry has been sent.
+
+## [0.7.0] - 2026-08-13
+
+### Security
+- **Secrets no longer ride any tmux argv (#68).** The environment used to cross into the
+  auto-created session as `new-session -e KEY=VALUE` pairs (and, below tmux 3.2, as
+  inline `export`s in the pane command) — and when that invocation is the one that
+  starts the tmux server, the server keeps the whole argv in `/proc/<pid>/cmdline`,
+  world-readable, for its entire multi-day lifetime. API keys, tokens and connection
+  strings were retrievable with a plain `ps`. The environment now crosses via a `0600`
+  JSON snapshot in a `0700` dir (`~/.claude-auto-retry/tmp/`); only the file *path*
+  appears on the command line, and the inner launcher loads it into `process.env` and
+  unlinks it (with a 24h sweep for launches that died before consuming). Loading in
+  Node rather than `source` round-trips names a POSIX shell can't — `BASH_FUNC_name%%`
+  exported functions, Windows `ProgramFiles(x86)` — which also retires the entire
+  "tmux rejects this env name" launch-failure class (#58) and the lenient/strict retry
+  machinery with it. Environment fidelity is *higher* than before: names the argv
+  filter had to drop now cross intact.
+
+### Changed
+- **Clean exits reap their tmux session (#69).** The pane tail was an unconditional
+  `; exec $SHELL`, so no session was ever destroyed — a clean `/exit` left an idle
+  login shell pinning the session and its whole process tree forever (measured by the
+  reporter: 66 sessions holding 16.4 GB after 3 days). The shell fallback is now
+  reserved for **non-zero** launcher exits, where the crash scrollback is genuinely
+  useful; on a clean exit the pane command ends and tmux reaps the session itself.
+  `CLAUDE_AUTO_RETRY_KEEP_SHELL=1` restores the old behavior.
+- **`CLAUDE_AUTO_RETRY_NO_TMUX=1`** skips tmux session creation entirely, for users
+  already inside a non-tmux multiplexer (Zellij, screen) who don't want a nested
+  session per launch (#69). Explicit opt-out — the nested session is what the monitor
+  drives, so this disables auto-retry for the run, and that trade belongs to the user.
+- The pane command now invokes the launching Node binary by absolute path instead of
+  relying on `node` being resolvable through a possibly-stale tmux server `PATH`.
+
+### Fixed
+- **Launch no longer fails with `server exited unexpectedly` when it races a
+  dying tmux server (#69 follow-up).** Session reaping means the tmux server now
+  exits once the last claude session ends (`exit-empty` defaults on) — and a
+  `new-session` landing in the teardown window (socket still on disk, server
+  draining) connects, sees EOF mid-handshake, and aborted the whole launch. This
+  window could not exist before reaping, because the server never exited.
+  Session creation now retries up to twice (250 ms apart) when the failure is
+  `server exited unexpectedly` / `lost server`; the next attempt finds the
+  socket gone or stale and cold-starts a fresh server. Real failures (duplicate
+  session, tmux missing, bad option) still fail immediately. Reproduced and
+  verified against real tmux 3.4: 23 forced race hits, 23 recovered, 0 residual
+  failures across 250 timed attempts.
+- **A usage-meter statusline no longer hijacks the reset-time parse (#61).** ccusage-style
+  statuslines render a permanent countdown row at the very bottom of the pane
+  ("current ●●●●●●●●●● 100%  ⟳ resets in 1 hr 47 min"). That row matches the reset
+  patterns and sits below any live banner, so the bottom-up scan in
+  `findRateLimitMessage` returned it instead of the banner — and its wording isn't
+  parseable, so a banner with a perfectly good "resets 6:20am (Europe/Brussels)" fell
+  back to the 5-hour default wait. Meter rows (countdown glyph variants, dotted gauges
+  with a percentage, the cost row) are now classified as chrome, and
+  `findRateLimitMessage` skips chrome the same way the detectors already do. This also
+  removes a standing false-positive anchor: the meter's "resets" line no longer
+  validates limit-shaped prose near the bottom of the pane.
+- **A failed env-snapshot write now warns instead of degrading silently** (PR #72
+  review follow-up). If `~/.claude-auto-retry/tmp` is unwritable (read-only or
+  over-quota `$HOME` — NFS-mounted HPC homes especially), the launch still proceeds,
+  but the pane runs with the tmux **server's** startup environment: on a pre-existing
+  server that can be days stale, so a rotated `ANTHROPIC_API_KEY` or fresh proxy var
+  quietly never reached `claude` with zero diagnostic. The degrade stays; the silence
+  goes — a stderr warning now names the cause.
+
 ## [0.6.2] - 2026-07-29
 
 ### Fixed

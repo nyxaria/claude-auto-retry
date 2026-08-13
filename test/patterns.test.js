@@ -320,6 +320,28 @@ describe('stripAnsi (private-mode sequences)', () => {
 });
 
 describe('findRateLimitMessage', () => {
+  // tailLines bounds the scan to the same chrome-aware window isRateLimited reads, so a
+  // caller that gates on liveness can't then parse a line the gate never saw. The monitor
+  // re-derives the wait during a fallback, where an unbounded scan could reach a stale
+  // banner high in scrollback and (shorten-only) let the earliest stale time win.
+  it('bounds the scan to the content tail when tailLines is set', () => {
+    const text = ["You've hit your limit · resets 3pm (UTC)",
+      ...Array(14).fill('ordinary content line')].join('\n');
+    assert.equal(findRateLimitMessage(text, [], 12), null);        // banner sits above the window
+    assert.ok(findRateLimitMessage(text, []).includes('3pm'));     // unbounded still reaches it
+  });
+  it('still finds a banner inside the tail window', () => {
+    const text = ['ordinary content line',
+      "You've hit your limit · resets 3pm (UTC)"].join('\n');
+    assert.ok(findRateLimitMessage(text, [], 12).includes('3pm'));
+  });
+  it('tail window skips trailing chrome rather than spending budget on it', () => {
+    // The banner is 13 raw lines up but only 1 line of real content up — the chrome-aware
+    // window must still reach it, exactly as isRateLimited does.
+    const text = ["You've hit your limit · resets 3pm (UTC)",
+      ...Array(12).fill('  ◻ a task widget row'), '❯ '].join('\n');
+    assert.ok(findRateLimitMessage(text, [], 12).includes('3pm'));
+  });
   it('returns the matching line from multiline input', () => {
     const text = 'Some output\n5-hour limit reached - resets 3pm (Europe/Dublin)\nMore output';
     assert.equal(findRateLimitMessage(text), '5-hour limit reached - resets 3pm (Europe/Dublin)');
@@ -338,6 +360,50 @@ describe('findRateLimitMessage', () => {
   it('returns the most recent resets line when scrollback has a stale one', () => {
     const text = 'You\'ve hit your limit · resets 11:30am (UTC)\nlots of output\nYou\'ve hit your limit · resets 4:30pm (UTC)';
     assert.ok(findRateLimitMessage(text).includes('4:30pm'));
+  });
+});
+
+// --- Usage-meter statusline footer (#61) ---
+// A ccusage-style statusline renders a permanent usage meter at the very bottom of the
+// pane: "current ●●●●●●●●●● 100%  ⟳ resets in 1 hr 47 min". That row matches
+// RESET_PATTERNS ("resets in <n>") and sits BELOW any live banner, so the bottom-up scan
+// in findRateLimitMessage returned it instead of the banner — and parseResetTime can't
+// read "1 hr 47 min", so the monitor fell back to the 5h default instead of waking at the
+// banner's real reset time (observed live in #61).
+const CCUSAGE_FOOTER = [
+  '  [Fix CI linting] │ Opus 5 (high) │ ●●●●●●○○ ctx:87% │ /Volumes/Webdev/Yamtrack',
+  '  current ●●●●●●●●●● 100%  ⟳ resets in 1 hr 47 min',
+  '  weekly  ●○○○○○○○○○  10%',
+  '  $230.61 ⏱ 59h14m │ diff:+63 -16',
+].join('\n');
+
+describe('usage-meter statusline footer (#61)', () => {
+  it('findRateLimitMessage prefers the banner over the meter row below it', () => {
+    const text = "  ⎿  You've hit your session limit · resets 6:20am (Europe/Brussels)\n\n"
+      + CCUSAGE_FOOTER;
+    assert.ok(findRateLimitMessage(text).includes('6:20am'),
+      `expected the banner, got: ${findRateLimitMessage(text)}`);
+  });
+
+  it('the meter row alone does not anchor a limit mention into a detection', () => {
+    // Prose ABOUT limits near the bottom must not get its "resets" anchor for free from
+    // the permanently-rendered meter row.
+    const text = 'I checked and you have not hit your usage limit yet.\n\n' + CCUSAGE_FOOTER;
+    assert.equal(isRateLimited(text, [], 12), false);
+  });
+
+  it('prefers the banner over other statusline layout variants ("⌛ Resets at …")', () => {
+    // ccusage layouts differ across versions/configs; the countdown glyph varies too.
+    const text = "  ⎿  You've hit your session limit · resets 6:20am (Europe/Brussels)\n\n"
+      + '  💰 $12.34 session │ ⌛ Resets at 15:00\n';
+    assert.ok(findRateLimitMessage(text).includes('6:20am'),
+      `expected the banner, got: ${findRateLimitMessage(text)}`);
+  });
+
+  it('still detects a real banner sitting above the full statusline footer', () => {
+    const text = "You've hit your session limit · resets 6:20am (Europe/Brussels)\n"
+      + '     /upgrade to increase your usage limit.\n\n' + CCUSAGE_FOOTER;
+    assert.equal(isRateLimited(text, [], 12), true);
   });
 });
 
