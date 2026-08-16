@@ -520,6 +520,24 @@ describe('a banner that names /usage-credits inline is content, not chrome', () 
       ['⏺ You can run /usage-credits when you hit your usage limit', '', '❯ '],
     ]) assert.equal(isRateLimited(pane.join('\n'), [], 12), false);
   });
+  it('outranks a STALE banner above it — the #74 composition', () => {
+    // Cross-PR pin, and the reason it lives on THIS branch: #74 adds a per-line eligibility
+    // veto to findRateLimitMessage, one signal of which is a budget on how many words may
+    // follow the reset clause. EVERY inline-hint banner busts that budget ("· run
+    // /usage-credits to finish" is four), so the render this branch makes parseable is
+    // exactly the shape that veto would demote — and only when something stale sits above
+    // it, which is why the single-line test above cannot see it. Demotion is the bad
+    // direction: the stale time PARSES, so `_waitIsFallback` is false and #70's
+    // correctUsageWait will not revisit the ~24h wait it latches.
+    //
+    // #74 resolves this by checking "does the line name a limit" ahead of the tail budget,
+    // so this passes on that branch too — verified against both its heads: with #74 at
+    // d0a0e16 this pane returned the stale banner, at ab302d6 it returns the live line.
+    // It cannot be written on #74's branch, where the hint is still chrome.
+    const pane = ["You've hit your limit · resets 11:30am (UTC)", '● wrote some code',
+      inlineHint, '', '❯ '].join('\n');
+    assert.equal(findRateLimitMessage(pane, [], 12), inlineHint);
+  });
   it('still treats the companion ROW as chrome', () => {
     // Anchored, not abandoned: the hint leading its line is still furniture, indented or
     // behind an echo marker, or the tail budget goes on it instead of on the banner.
