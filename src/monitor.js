@@ -5,6 +5,7 @@ import { loadConfig } from './config.js';
 import { createLogger } from './logger.js';
 import { readStopFailureEvent, clearStopFailureEvent, isRetryableError } from './events.js';
 import { writeStatus, clearStatus, sweepStaleStatus } from './status-file.js';
+import { createAccountReader } from './account.js';
 
 const DEFAULT_FOREGROUND_COMMANDS = ['node', 'claude', 'npx', 'tsx', 'bun', 'deno'];
 const SHELL_COMMANDS = ['bash', 'zsh', 'sh', 'fish', 'dash', 'ksh'];
@@ -17,6 +18,7 @@ const RATE_LIMIT_TAIL_LINES = 12;
 // old one. Sized above Claude Code's own internal attempt-N/10 backoff (which can hold a
 // genuinely-failing turn open for several minutes before the hook fires).
 const OVERLOAD_INCIDENT_GAP_MS = 15 * 60_000;
+const readSignedInAccount = createAccountReader();
 
 export function createMonitorState() {
   return {
@@ -122,6 +124,9 @@ function enterUsageWait(state, stripped, config, { fresh = false } = {}) {
   // of the ~600 dead re-derivations a 5h wait would otherwise run.
   state._waitIsFallback = !parsed;
   state._gaveUp = false;
+  // The account this limit belongs to (see the account-switch branch of the waiting state).
+  state._waitAccount = state._account ?? null;
+  state._accountRetry = false;
   if (fresh) state.attempts = 0;
   return 'waiting';
 }
@@ -174,8 +179,10 @@ function enterOverload(state, overload, rand) {
   return 'overload-detected';
 }
 
-export async function processOneTick(state, tmuxAdapter, pane, config, isAlive, rand = Math.random) {
+export async function processOneTick(state, tmuxAdapter, pane, config, isAlive, rand = Math.random,
+                                     readAccount = readSignedInAccount) {
   if (!isAlive()) return 'exit';
+  state._account = readAccount();
 
   // Capture generously (was 20, then 50): a live banner can sit far above the bottom behind
   // a tall task widget + input box + footer — ~90 lines in the wild (#38). The detectors
@@ -231,6 +238,32 @@ export async function processOneTick(state, tmuxAdapter, pane, config, isAlive, 
   }
 
   if (state.status === 'waiting') {
+    // An account switcher (claude-swap's `cswap auto`, a manual /login) moved this machine to
+    // another account mid-wait. The limit was the old account's, and a running Claude Code
+    // uses the new credential on its next request, so retry now instead of sitting out a
+    // reset that can be days away. If the new account is limited too, its own banner starts
+    // a fresh wait (the _accountRetry check below). The new account becomes the wait's
+    // account either way, so one switch sends at most one retry.
+    if (state._waitAccount && state._account && state._account !== state._waitAccount) {
+      state._waitAccount = state._account;
+      if (isWorking(stripped)) {
+        state.status = 'monitoring'; state.attempts = 0; state._gaveUp = false;
+        state._waitIsFallback = false;
+        return 'user-continued';
+      }
+      const foreground = await checkForeground(tmuxAdapter, pane, config);
+      if (!foreground.ok) {
+        state._lastForeground = foreground.fg;
+        return 'skipped-not-claude';   // the normal reset retry still stands
+      }
+      state.attempts++;
+      state.waitUntil = Date.now() + 30_000;
+      state._waitIsFallback = false;
+      state._accountRetry = true;
+      await tmuxAdapter.sendKeys(pane, config.retryMessage);
+      return 'retried-account-switch';
+    }
+
     // Keep counting down UNLESS the session has resumed working. A resumed pane means
     // the user manually continued (often to unstick a wrong/stale wait) — falling through
     // to the gate below returns us to monitoring, so a SECOND, genuine limit that
@@ -251,6 +284,16 @@ export async function processOneTick(state, tmuxAdapter, pane, config, isAlive, 
       return 'wait-corrected';
     }
     if (!isAlive()) return 'exit';
+
+    // After an account-switch retry, a live banner is the NEW account's: it is limited too.
+    // Wait for its own reset rather than re-sending blindly up to maxRetries.
+    if (state._accountRetry) {
+      state._accountRetry = false;
+      if (isRateLimited(stripped, config.customPatterns, RATE_LIMIT_TAIL_LINES)
+          && !resumedAfterLimit(stripped, RATE_LIMIT_TAIL_LINES)) {
+        return enterUsageWait(state, stripped, config, { fresh: true });
+      }
+    }
 
     // Stop driving the session if the limit cleared OR Claude has already resumed and
     // is working again. Without the resumed gate the usage path re-sends the retry
@@ -758,6 +801,7 @@ export async function startMonitor(pane, pid) {
       }
       if (result === 'menu-unreadable') await logger.warn('Rate-limit options menu detected but its layout could not be read; not pressing Enter (would risk confirming "Upgrade your plan"). Will recheck.');
       if (result === 'retried') await logger.info(`Sent retry message (attempt ${state.attempts})`);
+      if (result === 'retried-account-switch') await logger.info(`Signed-in account changed during the wait; sent retry message now (attempt ${state.attempts})`);
       if (result === 'user-continued') await logger.info('User already continued. Attempt counter reset.');
       if (result === 'max-retries') await logger.warn(`Max retries (${config.maxRetries}) reached. Monitor still active but will not send further retries until rate limit clears.`);
       if (result === 'skipped-not-claude') await logger.warn(`Foreground is "${state._lastForeground}", not Claude. Skipping send-keys. (Add to foregroundCommands in ~/.claude-auto-retry.json if this is wrong)`);
