@@ -802,10 +802,10 @@ export function nearLimitWrapUpMatch(text) {
 // user had scrolled up was never retried. Returns the visible transcript down to the
 // indicator (a fingerprint the monitor uses to tell an idle scroll from an active one), or
 // null when the view is live. The indicator is drawn well in from the margin, so it trails a wide
-// run of padding; requiring that run (and confining the search to the bottom rows) keeps
-// the phrase quoted in a sentence from matching, while leaving the wording after it free
-// to change between Claude Code versions.
-const SCROLLED_UP_INDICATOR = /\s{10,}(?:Jump to bottom|\d+ new messages?)\b/;
+// run of padding, and every variant carries a ↓ later on its row; requiring both (and
+// confining the search to the bottom rows) keeps the phrase quoted in a sentence, or a
+// padded "3 new messages" in a table, from matching.
+const SCROLLED_UP_INDICATOR = /\s{10,}(?:Jump to bottom|\d+ new messages?)\b.*↓/;
 const SCROLLED_UP_BOTTOM_ROWS = 20;   // input box + footer + a task widget, with margin
 export function scrolledUpView(text) {
   const all = stripAnsi(text).split('\n');

@@ -48,6 +48,10 @@ describe('scrolledUpView', () => {
   it('does NOT match "new messages" in a sentence', () => {
     assert.equal(scrolledUpView('⏺ There are 3 new messages in the queue.\n❯ '), null);
   });
+  it('does NOT match a padded phrase with no ↓ on its row (a table cell, a log line)', () => {
+    assert.equal(scrolledUpView('  | inbox            |          3 new messages |\n❯ '), null);
+    assert.equal(scrolledUpView('  status:              Jump to bottom disabled\n❯ '), null);
+  });
   it('ignores trailing blank rows below the footer', () => {
     assert.ok(scrolledUpView(CLICK + '\n\n\n\n'));
   });
