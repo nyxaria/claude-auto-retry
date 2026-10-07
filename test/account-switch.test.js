@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createMonitorState, processOneTick } from '../src/monitor.js';
+import { createMonitorState, processOneTick, ACCOUNT_SETTLE_MS, ACCOUNT_CHANGE_RECENT_MS } from '../src/monitor.js';
 import { DEFAULT_CONFIG } from '../src/config.js';
 import { isRateLimited } from '../src/patterns.js';
 import { claudeConfigPath, createAccountReader } from '../src/account.js';
@@ -70,6 +70,13 @@ function mockTmux(content, { foreground = true } = {}) {
   return t;
 }
 
+// The session mid-turn, before any limit.
+const WORKING_PANE = LIMIT_PANE.split('\n').filter((l) =>
+  !/hit your weekly limit|\/upgrade to increase/.test(l)).join('\n');
+
+// Age the last account change by `ms`, as if that much time had passed since it was seen.
+const age = (s, ms) => { s._accountChange.at -= ms; };
+
 const tick = (s, t, account) => processOneTick(s, t, '%0', DEFAULT_CONFIG, () => true, Math.random, () => account);
 
 async function waitingOn(account) {
@@ -92,9 +99,13 @@ describe('account switch during a usage-limit wait', () => {
     assert.deepEqual(t._sent, []);
   });
 
-  it('retries at once when the signed-in account changes', async () => {
+  it('retries once the account change has settled', async () => {
     const { s, t } = await waitingOn('acct-a/org-a');
     t.content = SWITCHED_PANE;
+    // Claude Code may still hold the old credential (macOS Keychain cache): not yet.
+    assert.equal(await tick(s, t, 'acct-b/org-b'), 'waiting');
+    assert.deepEqual(t._sent, []);
+    age(s, ACCOUNT_SETTLE_MS);
     assert.equal(await tick(s, t, 'acct-b/org-b'), 'retried-account-switch');
     assert.deepEqual(t._sent, [DEFAULT_CONFIG.retryMessage]);
     assert.equal(s.status, 'waiting');
@@ -104,12 +115,43 @@ describe('account switch during a usage-limit wait', () => {
     const { s, t } = await waitingOn('acct-a/org-a');
     t.content = SWITCHED_PANE;
     await tick(s, t, 'acct-b/org-b');
+    age(s, ACCOUNT_SETTLE_MS);
+    assert.equal(await tick(s, t, 'acct-b/org-b'), 'retried-account-switch');
     t.content = NEW_ACCOUNT_LIMIT_PANE;
     s.waitUntil = Date.now() - 1;   // the post-send cooldown has passed
     assert.equal(await tick(s, t, 'acct-b/org-b'), 'waiting');
     assert.match(s.lastRateLimitMessage, /session limit · resets 4pm/);
     assert.ok(s.waitUntil > Date.now() && s.waitUntil < Date.now() + 24 * 3600_000);
+    assert.equal(await tick(s, t, 'acct-b/org-b'), 'waiting');
     assert.equal(t._sent.length, 1, 'no second blind retry');
+  });
+
+  it('retries when the switch landed just before the limit was seen', async () => {
+    // At a ~100% switch threshold the switcher acts on the same exhaustion Claude hits: it
+    // can move the machine to the other account before the monitor reads the banner.
+    const s = createMonitorState();
+    const t = mockTmux(WORKING_PANE);
+    await tick(s, t, 'acct-a/org-a');
+    t.content = LIMIT_PANE;
+    assert.equal(await tick(s, t, 'acct-b/org-b'), 'waiting');
+    assert.equal(s._waitAccount, 'acct-a/org-a', 'the limit is the previous account\'s');
+    assert.deepEqual(t._sent, []);
+    age(s, ACCOUNT_SETTLE_MS);
+    assert.equal(await tick(s, t, 'acct-b/org-b'), 'retried-account-switch');
+    assert.deepEqual(t._sent, [DEFAULT_CONFIG.retryMessage]);
+  });
+
+  it('does not blame a limit on an account switch from long before', async () => {
+    const s = createMonitorState();
+    const t = mockTmux(WORKING_PANE);
+    await tick(s, t, 'acct-a/org-a');
+    await tick(s, t, 'acct-b/org-b');
+    age(s, ACCOUNT_CHANGE_RECENT_MS + 1);
+    t.content = LIMIT_PANE;
+    assert.equal(await tick(s, t, 'acct-b/org-b'), 'waiting');
+    assert.equal(s._waitAccount, 'acct-b/org-b');
+    assert.equal(await tick(s, t, 'acct-b/org-b'), 'waiting');
+    assert.deepEqual(t._sent, []);
   });
 
   it('does not type into a session that is already working', async () => {
@@ -122,6 +164,8 @@ describe('account switch during a usage-limit wait', () => {
   it('does not type when Claude is not in the foreground', async () => {
     const { s } = await waitingOn('acct-a/org-a');
     const t = mockTmux(SWITCHED_PANE, { foreground: false });
+    await tick(s, t, 'acct-b/org-b');
+    age(s, ACCOUNT_SETTLE_MS);
     assert.equal(await tick(s, t, 'acct-b/org-b'), 'skipped-not-claude');
     assert.deepEqual(t._sent, []);
   });

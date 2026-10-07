@@ -19,6 +19,16 @@ const RATE_LIMIT_TAIL_LINES = 12;
 // genuinely-failing turn open for several minutes before the hook fires).
 const OVERLOAD_INCIDENT_GAP_MS = 15 * 60_000;
 const readSignedInAccount = createAccountReader();
+// On macOS Claude Code caches the Keychain credential for ~30s, so a retry sent the moment
+// .claude.json names a new account can still leave on the old, limited one — and its fresh
+// banner would then start a wait for the OLD account's reset. Hold the account-switch retry
+// until the change has had time to reach the running session.
+export const ACCOUNT_SETTLE_MS = 45_000;
+// A limit detected this soon after an account change may still be the previous account's:
+// the request that hit it can have left on the cached old credential, or the switcher (which
+// at a ~100% threshold acts on the same exhaustion) can land between Claude's 429 and our
+// next poll. Such a wait is attributed to the previous account so the switch still retries.
+export const ACCOUNT_CHANGE_RECENT_MS = 2 * 60_000;
 
 export function createMonitorState() {
   return {
@@ -124,8 +134,11 @@ function enterUsageWait(state, stripped, config, { fresh = false } = {}) {
   // of the ~600 dead re-derivations a 5h wait would otherwise run.
   state._waitIsFallback = !parsed;
   state._gaveUp = false;
-  // The account this limit belongs to (see the account-switch branch of the waiting state).
-  state._waitAccount = state._account ?? null;
+  // The account this limit belongs to (see the account-switch branch of the waiting state):
+  // the previous one if the switch landed just before this wait (ACCOUNT_CHANGE_RECENT_MS).
+  const change = state._accountChange;
+  state._waitAccount = change && Date.now() - change.at <= ACCOUNT_CHANGE_RECENT_MS
+    ? change.from : (state._account ?? null);
   state._accountRetry = false;
   if (fresh) state.attempts = 0;
   return 'waiting';
@@ -179,10 +192,20 @@ function enterOverload(state, overload, rand) {
   return 'overload-detected';
 }
 
+// Record the signed-in account and when it last changed. An unreadable read (file mid-write,
+// logged out) keeps the last known account rather than registering as a change.
+function trackAccount(state, account) {
+  if (!account) return;
+  if (state._account && account !== state._account) {
+    state._accountChange = { from: state._account, at: Date.now() };
+  }
+  state._account = account;
+}
+
 export async function processOneTick(state, tmuxAdapter, pane, config, isAlive, rand = Math.random,
                                      readAccount = readSignedInAccount) {
   if (!isAlive()) return 'exit';
-  state._account = readAccount();
+  trackAccount(state, readAccount());
 
   // Capture generously (was 20, then 50): a live banner can sit far above the bottom behind
   // a tall task widget + input box + footer — ~90 lines in the wild (#38). The detectors
@@ -241,11 +264,14 @@ export async function processOneTick(state, tmuxAdapter, pane, config, isAlive, 
     // An account switcher (claude-swap's `cswap auto`, a manual /login) moved this machine to
     // another account mid-wait. The limit was the old account's, and a running Claude Code
     // uses the new credential on its next request, so retry now instead of sitting out a
-    // reset that can be days away. If the new account is limited too, its own banner starts
-    // a fresh wait (the _accountRetry check below). The new account becomes the wait's
-    // account either way, so one switch sends at most one retry.
-    if (state._waitAccount && state._account && state._account !== state._waitAccount) {
+    // reset that can be days away — once the change has settled (ACCOUNT_SETTLE_MS). If the
+    // new account is limited too, its own banner starts a fresh wait (the _accountRetry check
+    // below). The new account becomes the wait's account either way and the change is
+    // consumed, so one switch sends at most one retry.
+    const settled = !state._accountChange || Date.now() - state._accountChange.at >= ACCOUNT_SETTLE_MS;
+    if (state._waitAccount && state._account && state._account !== state._waitAccount && settled) {
       state._waitAccount = state._account;
+      state._accountChange = null;
       if (isWorking(stripped)) {
         state.status = 'monitoring'; state.attempts = 0; state._gaveUp = false;
         state._waitIsFallback = false;

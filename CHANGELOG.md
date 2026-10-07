@@ -30,15 +30,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reset already in the past means the limit cleared — retry now rather than a year later.
 
 ### Added
-- **A usage-limit wait retries at once when the signed-in account changes.** Account
-  switchers (claude-swap's `cswap auto`, a manual `/login`) move the machine to another
-  account, and a running Claude Code uses the new credential on its next request. The
-  monitor now reads the account from `.claude.json` (`oauthAccount`; `CLAUDE_CONFIG_DIR` is
-  honoured, and it re-parses only when the file changes). If the account differs from the
-  one that hit the limit, it sends the retry message immediately instead of sitting out the
-  old account's reset. If the new account is limited too, its own banner starts a fresh wait
-  rather than a run of blind retries. A session already working, or with something other
-  than Claude in the foreground, is not typed into.
+- **A usage-limit wait retries when the signed-in account changes.** Account switchers
+  (claude-swap's `cswap auto`, a manual `/login`) move the machine to another account, and a
+  running Claude Code picks the new credential up. The monitor now reads the account from
+  `.claude.json` (`oauthAccount`; `CLAUDE_CONFIG_DIR` is honoured, and it re-parses only when
+  the file changes). If the account differs from the one that hit the limit, it sends the
+  retry message 45 seconds after the change instead of sitting out the old account's reset;
+  the delay outlasts Claude Code's ~30-second macOS Keychain cache, which would otherwise
+  send the retry on the old, limited credential. A limit seen within two minutes of a
+  switch is attributed to the previous account, so a switcher that acts on the same
+  exhaustion (a ~100% threshold) and lands before the banner is read still gets the retry.
+  If the new account is limited too, its own banner starts a fresh wait rather than a run of
+  blind retries. A session already working, or with something other than Claude in the
+  foreground, is not typed into.
 - **A session Claude Code winds down near the 5-hour limit is nudged back to work (#78).**
   At ~95% of the window Claude Code injects a checkpoint instruction into the model's
   context and prints "⏺ Approaching your 5-hour usage limit — Claude will wrap up the
