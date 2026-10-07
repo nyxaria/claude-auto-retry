@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fullscreen TUI scrolls its own transcript (mouse wheel, PgUp) and pins "Jump to bottom"
   (or "N new messages") above the input box; the pane then shows history, so a limit banner or idle prompt below
   the view was invisible and the session was never retried. The monitor now recognises the
-  indicator (it trails a wide run of padding, so a quoted sentence never matches), stands
+  indicator (a wide run of padding before it and a ↓ after it, so a quoted sentence never matches), stands
   down while it shows — a stale banner in the scrolled history must not drive a retry —
   and once the view has sat untouched for `scrolledUpGraceSeconds` (default 600) sends
   Ctrl+End, which jumps to the bottom without touching a draft in the input box.
