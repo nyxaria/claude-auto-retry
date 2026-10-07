@@ -795,7 +795,8 @@ export function nearLimitWrapUpMatch(text) {
 // Scrolled-up transcript. Claude Code's fullscreen TUI scrolls its own transcript (mouse
 // wheel, PgUp) inside the alternate screen — tmux copy-mode is never involved — and while
 // scrolled it pins an indicator just above the input box: "Jump to bottom (click) ↓" or,
-// overlaid on the last visible row, "Jump to bottom: fn+↓ to scroll". The pane then shows
+// overlaid on the last visible row, "Jump to bottom: fn+↓ to scroll" — and once output
+// arrives below the view, "1 new message (click) ↓". The pane then shows
 // HISTORY: the live tail (a limit banner, an idle prompt after a truncated turn) is off
 // screen, so every detector reads a stale view — a session that hit its limit while the
 // user had scrolled up was never retried. Returns the visible transcript down to the
@@ -804,7 +805,7 @@ export function nearLimitWrapUpMatch(text) {
 // run of padding; requiring that run (and confining the search to the bottom rows) keeps
 // the phrase quoted in a sentence from matching, while leaving the wording after it free
 // to change between Claude Code versions.
-const SCROLLED_UP_INDICATOR = /\s{10,}Jump to bottom\b/;
+const SCROLLED_UP_INDICATOR = /\s{10,}(?:Jump to bottom|\d+ new messages?)\b/;
 const SCROLLED_UP_BOTTOM_ROWS = 20;   // input box + footer + a task widget, with margin
 export function scrolledUpView(text) {
   const all = stripAnsi(text).split('\n');

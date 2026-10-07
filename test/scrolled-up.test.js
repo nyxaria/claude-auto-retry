@@ -20,7 +20,7 @@ function mockTmux(paneContent, claudeForeground = true) {
   };
   return t;
 }
-const cfg = (grace = 120) => ({ ...DEFAULT_CONFIG, scrolledUpGraceSeconds: grace });
+const cfg = (grace = 600) => ({ ...DEFAULT_CONFIG, scrolledUpGraceSeconds: grace });
 
 // Real captures (tmux capture-pane -p) of Claude Code v2.1.292's fullscreen TUI, 120x40,
 // after `!seq` filled the transcript: scrolled up with the mouse wheel ("(click)" variant),
@@ -30,6 +30,8 @@ const fixture = (name) => readFileSync(new URL(`./fixtures/scrolled-up-${name}.t
 const CLICK = fixture('click');
 const FN = fixture('fn');
 const LIVE = fixture('live');
+// Scrolled up with the mouse while output was still arriving below the view.
+const NEW_MESSAGE = fixture('new-message');
 // A live-looking limit banner sitting in the history the user scrolled up to.
 const STALE_BANNER = CLICK.replace(/^\s+490\s*$/m, "  ⎿  You've hit your session limit · resets 9:50pm (Europe/London)");
 
@@ -39,6 +41,12 @@ describe('scrolledUpView', () => {
   });
   it('detects the keyboard indicator overlaid on a transcript row', () => {
     assert.match(scrolledUpView(FN).split('\n').at(-1), /^\s+170\s+Jump to bottom: fn\+↓ to scroll/);
+  });
+  it('detects the "N new message" indicator once output arrives below the view', () => {
+    assert.match(scrolledUpView(NEW_MESSAGE).split('\n').at(-1), /^\s+17\s+1 new message \(click\) ↓/);
+  });
+  it('does NOT match "new messages" in a sentence', () => {
+    assert.equal(scrolledUpView('⏺ There are 3 new messages in the queue.\n❯ '), null);
   });
   it('ignores trailing blank rows below the footer', () => {
     assert.ok(scrolledUpView(CLICK + '\n\n\n\n'));
@@ -70,7 +78,7 @@ describe('processOneTick — scrolled-up transcript', () => {
     const s = createMonitorState();
     await processOneTick(s, t, '%0', cfg(), () => true);
     assert.equal(await processOneTick(s, t, '%0', cfg(), () => true), 'scrolled-up-holding');
-    s._scrolledUp.since -= 121_000;
+    s._scrolledUp.since -= 601_000;
     assert.equal(await processOneTick(s, t, '%0', cfg(), () => true), 'scrolled-down');
     assert.deepEqual(t._keys, ['C-End']);
     assert.equal(s._scrolledUp, null);
@@ -79,7 +87,7 @@ describe('processOneTick — scrolled-up transcript', () => {
     const t = mockTmux(CLICK);
     const s = createMonitorState();
     await processOneTick(s, t, '%0', cfg(), () => true);
-    s._scrolledUp.since -= 121_000;
+    s._scrolledUp.since -= 601_000;
     t.content = FN;   // the view moved
     assert.equal(await processOneTick(s, t, '%0', cfg(), () => true), 'scrolled-up-holding');
     assert.deepEqual(t._keys, []);
@@ -107,10 +115,10 @@ describe('config — scrolledUpGraceSeconds', () => {
     await writeFile(p, JSON.stringify(obj));
     return loadConfig(p);
   };
-  it('defaults to 120s', () => assert.equal(DEFAULT_CONFIG.scrolledUpGraceSeconds, 120));
+  it('defaults to 600s', () => assert.equal(DEFAULT_CONFIG.scrolledUpGraceSeconds, 600));
   it('accepts 0 (jump back at once)', async () => assert.equal((await load({ scrolledUpGraceSeconds: 0 })).scrolledUpGraceSeconds, 0));
   it('rejects a negative or non-number value', async () => {
-    assert.equal((await load({ scrolledUpGraceSeconds: -5 })).scrolledUpGraceSeconds, 120);
-    assert.equal((await load({ scrolledUpGraceSeconds: 'soon' })).scrolledUpGraceSeconds, 120);
+    assert.equal((await load({ scrolledUpGraceSeconds: -5 })).scrolledUpGraceSeconds, 600);
+    assert.equal((await load({ scrolledUpGraceSeconds: 'soon' })).scrolledUpGraceSeconds, 600);
   });
 });
