@@ -277,4 +277,12 @@ describe('5-hour window cap', () => {
     const weekly = calculateWaitMs(parseResetTime("You've hit your weekly limit · resets Oct 9 at 6am (Europe/London)"), 60, 5, LONDON_1012);
     assert.ok(weekly > 19 * 3600_000);
   });
+
+  it('does not cap a weekly reset under a day away, which renders without a date', () => {
+    // Inside its last 24h a weekly reset drops the date and takes the 5-hour shape.
+    const banner = "⎿  You've hit your weekly limit · resets 6am (Europe/London)";
+    assert.equal(parseResetTime(banner).window, undefined);
+    const wait = calculateWaitMs(parseResetTime(banner), 60, 5, LONDON_1012);
+    assert.ok(wait > 19 * 3600_000, '10:12 → 06:00 tomorrow, uncapped');
+  });
 });
