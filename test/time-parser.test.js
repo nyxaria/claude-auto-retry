@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseResetTime, calculateWaitMs } from '../src/time-parser.js';
+import { stripAnsi, isRateLimited, findRateLimitMessage } from '../src/patterns.js';
 
 describe('parseResetTime', () => {
   it('parses "resets 3pm (Europe/Dublin)"', () => {
@@ -277,12 +278,54 @@ describe('5-hour window cap', () => {
     const weekly = calculateWaitMs(parseResetTime("You've hit your weekly limit · resets Oct 9 at 6am (Europe/London)"), 60, 5, LONDON_1012);
     assert.ok(weekly > 19 * 3600_000);
   });
+});
 
-  it('does not cap a weekly reset under a day away, which renders without a date', () => {
-    // Inside its last 24h a weekly reset drops the date and takes the 5-hour shape.
-    const banner = "⎿  You've hit your weekly limit · resets 6am (Europe/London)";
-    assert.equal(parseResetTime(banner).window, undefined);
-    const wait = calculateWaitMs(parseResetTime(banner), 60, 5, LONDON_1012);
-    assert.ok(wait > 19 * 3600_000, '10:12 → 06:00 tomorrow, uncapped');
+// A real screen (Claude Code 2.1.294, project path replaced): an account at its weekly limit
+// with the reset under a day away. Inside its last 24 hours a weekly reset drops the date and
+// takes the clock-only shape of a 5-hour one, and the footer names no window at all. Both
+// lines must keep the full wait: only wording that names the 5-hour window is capped.
+describe('weekly limit under a day away (undated render)', () => {
+  const blank = (n) => Array(n).fill('');
+  const RULE = '─'.repeat(94);
+  const PANE = [
+    '',
+    ' ▐▛███▛█   Claude Code v2.1.294',
+    '▝▜██████▀  Opus 5.5 with high effort · Claude Pro',
+    ' ▝▝   ▝▝   ~/projects/app',
+    '',
+    '  Opus 5.5 is now your default model and it draws down usage faster than Sonnet 5. Switch',
+    '  anytime with /model.',
+    '',
+    '❯ Reply with the single word: ok',
+    "  ⎿  You've hit your weekly limit · resets 6am (Europe/London)",
+    '',
+    '⏺ Usage limit reached · continuing automatically at 6am · esc to cancel',
+    '',
+    '✻ Cogitated for 0s · done 10:39',
+    ...blank(17),
+    RULE,
+    '❯ ',
+    RULE,
+    '  ⚠ Usage limit reached · limit resets 6am',
+    '    Continuing automatically at 6am · esc to cancel',
+    '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents',
+  ].join('\n');
+  const AT_1039 = new Date('2026-10-08T09:39:00Z');   // 10:39 BST, when it was captured
+  const UNTIL_6AM = (19 * 3600 + 21 * 60 + 60) * 1000;   // 10:39 → 06:00 BST, plus margin
+
+  it('is detected, and the wait runs to the 6am reset', () => {
+    const stripped = stripAnsi(PANE);
+    assert.equal(isRateLimited(stripped, [], 12), true);
+    const message = findRateLimitMessage(stripped, [], 12);
+    assert.equal(message, '⚠ Usage limit reached · limit resets 6am');
+    const parsed = parseResetTime(message);
+    assert.equal(parsed.window, undefined);
+    assert.equal(calculateWaitMs({ ...parsed, timezone: 'Europe/London' }, 60, 5, AT_1039), UNTIL_6AM);
+  });
+
+  it('keeps the full wait for the undated weekly line too', () => {
+    const parsed = parseResetTime("  ⎿  You've hit your weekly limit · resets 6am (Europe/London)");
+    assert.equal(parsed.window, undefined);
+    assert.equal(calculateWaitMs(parsed, 60, 5, AT_1039), UNTIL_6AM);
   });
 });
