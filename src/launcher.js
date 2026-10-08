@@ -400,8 +400,13 @@ export function sessionNameIgnoredWarning(mode, fromFlag) {
 // inherits the full launching env the normal Unix way (execFileSync passes process.env),
 // so the pane's fallback shell keeps working; a pre-existing server's stale env only
 // ever reaches that fallback shell, never claude itself.
+//
+// The session starts at a fixed size: one nobody attaches to keeps it, so Claude Code always
+// lays out the same screen the monitor reads. An attaching client still resizes it.
+export const SESSION_WIDTH = 118;
+export const SESSION_HEIGHT = 32;
 export function buildNewSessionArgs(sessionName, innerCmd) {
-  return ['new-session', '-d', '-s', sessionName, innerCmd];
+  return ['new-session', '-d', '-s', sessionName, '-x', String(SESSION_WIDTH), '-y', String(SESSION_HEIGHT), innerCmd];
 }
 
 // Session reaping (#69) means the tmux server now exits when the last claude session

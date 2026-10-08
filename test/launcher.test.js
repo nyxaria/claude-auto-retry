@@ -154,7 +154,7 @@ describe('env snapshot file (#68)', () => {
 describe('buildNewSessionArgs (#68)', () => {
   it('never puts env names or values on the argv, on any tmux version', () => {
     const args = buildNewSessionArgs('s1', 'inner');
-    assert.deepEqual(args, ['new-session', '-d', '-s', 's1', 'inner']);
+    assert.deepEqual(args, ['new-session', '-d', '-s', 's1', '-x', '118', '-y', '32', 'inner']);
     assert.ok(!args.includes('-e'));
     assert.ok(!args.some(a => a.includes('export ')));
   });
