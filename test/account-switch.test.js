@@ -14,6 +14,10 @@ import { claudeConfigPath, createAccountReader } from '../src/account.js';
 // and an update notice appeared on the row above the input box. The waiting monitor
 // dropped its 5-day wait as "user continued" without sending anything; the session sat idle.
 const blank = (n) => Array(n).fill('');
+// The weekly reset, five days out from whenever the suite runs: a fixed date ("Oct 9") makes
+// the multi-day wait below a time bomb.
+const RESET_DAY = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/London', month: 'short', day: 'numeric' })
+  .format(new Date(Date.now() + 5 * 24 * 3600_000));
 const RULE = '─'.repeat(196);
 // The rule above the input box carries the session's name when it has one (--name, /rename).
 const NAMED_RULE = `${'─'.repeat(185)} agent-3 ─`;
@@ -32,7 +36,7 @@ const SWITCHED_PANE = [
   '⏺ Docker is available, so I can test the sandbox inside a container.',
   '',
   '  Ran 3 shell commands',
-  "  ⎿  You've hit your weekly limit · resets Oct 9 at 6am (Europe/London)",
+  `  ⎿  You've hit your weekly limit · resets ${RESET_DAY} at 6am (Europe/London)`,
   '     /upgrade to increase your usage limit.',
   '',
   '✻ Worked for 1m 46s · done 3:38',
