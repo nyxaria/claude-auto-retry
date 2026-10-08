@@ -5,8 +5,10 @@ import { loadConfig } from './config.js';
 import { createLogger } from './logger.js';
 import { readStopFailureEvent, clearStopFailureEvent, isRetryableError } from './events.js';
 import { writeStatus, clearStatus, sweepStaleStatus } from './status-file.js';
-import { createAccountReader } from './account.js';
+import { createAccountReader, ACCOUNT_SETTLE_MS, ACCOUNT_CHANGE_RECENT_MS } from './account.js';
 import { writeSnapshot } from './snapshot.js';
+
+export { ACCOUNT_SETTLE_MS, ACCOUNT_CHANGE_RECENT_MS };
 
 const DEFAULT_FOREGROUND_COMMANDS = ['node', 'claude', 'npx', 'tsx', 'bun', 'deno'];
 const SHELL_COMMANDS = ['bash', 'zsh', 'sh', 'fish', 'dash', 'ksh'];
@@ -20,16 +22,6 @@ const RATE_LIMIT_TAIL_LINES = 12;
 // genuinely-failing turn open for several minutes before the hook fires).
 const OVERLOAD_INCIDENT_GAP_MS = 15 * 60_000;
 const readSignedInAccount = createAccountReader();
-// On macOS Claude Code caches the Keychain credential for ~30s, so a retry sent the moment
-// .claude.json names a new account can still leave on the old, limited one — and its fresh
-// banner would then start a wait for the OLD account's reset. Hold the account-switch retry
-// until the change has had time to reach the running session.
-export const ACCOUNT_SETTLE_MS = 45_000;
-// A limit detected this soon after an account change may still be the previous account's:
-// the request that hit it can have left on the cached old credential, or the switcher (which
-// at a ~100% threshold acts on the same exhaustion) can land between Claude's 429 and our
-// next poll. Such a wait is attributed to the previous account so the switch still retries.
-export const ACCOUNT_CHANGE_RECENT_MS = 2 * 60_000;
 
 export function createMonitorState() {
   return {

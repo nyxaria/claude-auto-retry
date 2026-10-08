@@ -7,6 +7,7 @@ import { createMonitorState, processOneTick, ACCOUNT_SETTLE_MS, ACCOUNT_CHANGE_R
 import { DEFAULT_CONFIG } from '../src/config.js';
 import { isRateLimited } from '../src/patterns.js';
 import { claudeConfigPath, createAccountReader } from '../src/account.js';
+import { waitForResetOrSwitch, ACCOUNT_POLL_MS } from '../src/launcher.js';
 
 // A real 50-row capture (Claude Code 2.1.289, project text replaced): a weekly limit hit
 // inside a collapsed tool group, then an account switcher (claude-swap's `cswap auto`) moved
@@ -217,5 +218,54 @@ describe('createAccountReader', () => {
   it('follows CLAUDE_CONFIG_DIR like Claude Code', () => {
     assert.equal(claudeConfigPath({ CLAUDE_CONFIG_DIR: '/cfg' }), '/cfg/.claude.json');
     assert.match(claudeConfigPath({}), /\.claude\.json$/);
+  });
+});
+
+describe('waitForResetOrSwitch (print mode)', () => {
+  // A fake clock: sleep advances it, and the account the reader returns is scripted by time.
+  const clock = (accountAt) => {
+    let t = 0;
+    return {
+      now: () => t,
+      sleep: async (ms) => { t += ms; },
+      readAccount: () => accountAt(t),
+      elapsed: () => t,
+    };
+  };
+  const HOUR = 3600_000;
+
+  it('sleeps the whole wait when the account never changes', async () => {
+    const c = clock(() => 'a/o');
+    assert.equal(await waitForResetOrSwitch(HOUR, 'a/o', c), 'reset');
+    assert.equal(c.elapsed(), HOUR);
+  });
+
+  it('retries once a switch has held for the settle time, not before', async () => {
+    const c = clock((t) => (t >= 60_000 ? 'b/o' : 'a/o'));
+    assert.equal(await waitForResetOrSwitch(HOUR, 'a/o', c), 'switched');
+    assert.ok(c.elapsed() >= 60_000 + ACCOUNT_SETTLE_MS, `elapsed ${c.elapsed()}`);
+    assert.ok(c.elapsed() < 60_000 + ACCOUNT_SETTLE_MS + ACCOUNT_POLL_MS * 2, `elapsed ${c.elapsed()}`);
+  });
+
+  it('ignores a switch that is reverted before it settles', async () => {
+    const c = clock((t) => (t >= 60_000 && t < 80_000 ? 'b/o' : 'a/o'));
+    assert.equal(await waitForResetOrSwitch(10 * 60_000, 'a/o', c), 'reset');
+  });
+
+  it('treats an unreadable account as no change', async () => {
+    const c = clock(() => null);
+    assert.equal(await waitForResetOrSwitch(10 * 60_000, 'a/o', c), 'reset');
+  });
+
+  it('an unreadable read mid-switch does not restart the settle clock', async () => {
+    const c = clock((t) => (t < 60_000 ? 'a/o' : t === 70_000 ? null : 'b/o'));
+    assert.equal(await waitForResetOrSwitch(HOUR, 'a/o', c), 'switched');
+    assert.ok(c.elapsed() < 60_000 + ACCOUNT_SETTLE_MS + ACCOUNT_POLL_MS * 2);
+  });
+
+  it('is a plain sleep when no account was known at launch', async () => {
+    const c = clock(() => 'b/o');
+    assert.equal(await waitForResetOrSwitch(10 * 60_000, null, c), 'reset');
+    assert.equal(c.elapsed(), 10 * 60_000);
   });
 });
