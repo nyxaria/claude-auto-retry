@@ -125,6 +125,9 @@ export const DEFAULT_CONFIG = {
   safeguard: DEFAULT_SAFEGUARD,
   streamInterrupted: DEFAULT_STREAM_INTERRUPTED,
   nearLimitWrapUp: DEFAULT_NEAR_LIMIT_WRAP_UP,
+  // Save the screen once Claude has sat idle at its prompt this long with nothing detected
+  // (see snapshot.js); 0 turns it off.
+  idleSnapshotMinutes: 30,
 };
 
 const CONFIG_PATH = join(homedir(), '.claude-auto-retry.json');
@@ -210,6 +213,7 @@ function validate(cfg) {
   cfg.pollIntervalSeconds = validNumber(cfg.pollIntervalSeconds, 1, DEFAULT_CONFIG.pollIntervalSeconds);
   cfg.marginSeconds = validNumber(cfg.marginSeconds, 0, DEFAULT_CONFIG.marginSeconds);
   cfg.fallbackWaitHours = validNumber(cfg.fallbackWaitHours, 0.1, DEFAULT_CONFIG.fallbackWaitHours);
+  cfg.idleSnapshotMinutes = validNumber(cfg.idleSnapshotMinutes, 0, DEFAULT_CONFIG.idleSnapshotMinutes);
   if (typeof cfg.retryMessage !== 'string' || !cfg.retryMessage) {
     cfg.retryMessage = DEFAULT_CONFIG.retryMessage;
   }

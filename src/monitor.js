@@ -5,6 +5,7 @@ import { loadConfig } from './config.js';
 import { createLogger } from './logger.js';
 import { readStopFailureEvent, clearStopFailureEvent, isRetryableError } from './events.js';
 import { writeStatus, clearStatus, sweepStaleStatus } from './status-file.js';
+import { writeSnapshot } from './snapshot.js';
 
 const DEFAULT_FOREGROUND_COMMANDS = ['node', 'claude', 'npx', 'tsx', 'bun', 'deno'];
 const SHELL_COMMANDS = ['bash', 'zsh', 'sh', 'fish', 'dash', 'ksh'];
@@ -666,7 +667,26 @@ export async function processOneTick(state, tmuxAdapter, pane, config, isAlive, 
     }
   }
 
-  return 'monitoring';
+  return idleSnapshot(state, stripped, raw, config) ?? 'monitoring';
+}
+
+// Claude idle at its prompt for idleSnapshotMinutes with nothing detected: hand the screen
+// to the loop to save, once per idle episode. An episode starts when Claude stops working,
+// or when this path runs again after time spent elsewhere (a usage wait, a scrolled view).
+function idleSnapshot(state, stripped, raw, config) {
+  if (!config.idleSnapshotMinutes) return null;
+  const now = Date.now();
+  const resumed = now - (state._idleSeenAt || 0) > config.pollIntervalSeconds * 1000 * 3;
+  state._idleSeenAt = now;
+  if (resumed || isWorking(stripped)) {
+    state._idleSince = now;
+    state._idleSnapped = false;
+    return null;
+  }
+  if (state._idleSnapped || now - state._idleSince < config.idleSnapshotMinutes * 60_000) return null;
+  state._idleSnapped = true;
+  state._idleSnapshot = raw;
+  return 'idle-snapshot';
 }
 
 export async function startMonitor(pane, pid) {
@@ -758,6 +778,11 @@ export async function startMonitor(pane, pid) {
       }
       if (result === 'menu-unreadable') await logger.warn('Rate-limit options menu detected but its layout could not be read; not pressing Enter (would risk confirming "Upgrade your plan"). Will recheck.');
       if (result === 'retried') await logger.info(`Sent retry message (attempt ${state.attempts})`);
+      if (result === 'idle-snapshot') {
+        const file = await writeSnapshot(pane, state._idleSnapshot).catch((e) => `(not saved: ${e.message})`);
+        state._idleSnapshot = null;
+        await logger.info(`Claude has sat idle at its prompt for ${config.idleSnapshotMinutes} min with nothing detected; screen saved to ${file}`);
+      }
       if (result === 'user-continued') await logger.info('User already continued. Attempt counter reset.');
       if (result === 'max-retries') await logger.warn(`Max retries (${config.maxRetries}) reached. Monitor still active but will not send further retries until rate limit clears.`);
       if (result === 'skipped-not-claude') await logger.warn(`Foreground is "${state._lastForeground}", not Claude. Skipping send-keys. (Add to foregroundCommands in ~/.claude-auto-retry.json if this is wrong)`);
