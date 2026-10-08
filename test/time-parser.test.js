@@ -232,3 +232,49 @@ describe('date-bearing resets (weekly limit)', () => {
     assert.equal(wait, (3 * 24 + 9) * 3600_000);                  // Jan 2 2027 09:00Z
   });
 });
+
+// --- A 5-hour (session) limit resets at most five hours after its banner appears, so a
+//     banner read later than that names a reset that already passed. Observed live: an
+//     unattended session hit "You've hit your session limit · resets 12:50am
+//     (Europe/London)" at 22:02, the monitor first read it at 10:12 the next morning, and
+//     rolled to the NEXT 12:50am — a 14.6h wait for a limit that had cleared 9h before.
+describe('5-hour window cap', () => {
+  const LONDON_1012 = new Date('2026-10-08T09:12:04Z');   // 10:12 BST
+  const SESSION = "⎿  You've hit your session limit · resets 12:50am (Europe/London)";
+
+  it('tags session and 5-hour banners with their window', () => {
+    assert.equal(parseResetTime(SESSION).window, '5h');
+    assert.equal(parseResetTime('5-hour limit reached - resets 3pm (Europe/Dublin)').window, '5h');
+    assert.equal(parseResetTime('● Session limit reached · resets 9pm').window, '5h');
+  });
+
+  it('leaves weekly, dual and unnamed windows untagged', () => {
+    assert.equal(parseResetTime("You've hit your weekly limit · resets Oct 9 at 6am (Europe/London)").window, undefined);
+    assert.equal(parseResetTime('5-hour limit resets 3pm, weekly limit resets 9am (UTC)').window, undefined);
+    assert.equal(parseResetTime('Claude usage limit reached · resets 2pm').window, undefined);
+  });
+
+  it('retries now when a session banner is read after its reset passed', () => {
+    const wait = calculateWaitMs(parseResetTime(SESSION), 60, 5, LONDON_1012);
+    assert.equal(wait, 60_000, 'margin only: the limit already cleared');
+  });
+
+  it('retries now for an ambiguous session reset read too late', () => {
+    // "resets 9" read at 22:00 the next day: both 09:00 and 21:00 are past beyond grace,
+    // and tomorrow's 09:00 is 11h away — impossible for a 5-hour window.
+    const parsed = parseResetTime("You've hit your session limit · resets 9 (UTC)");
+    assert.equal(calculateWaitMs(parsed, 60, 5, new Date('2026-10-08T22:00:00Z')), 60_000);
+  });
+
+  it('still waits for a session reset that is genuinely ahead', () => {
+    const wait = calculateWaitMs(parseResetTime(SESSION), 60, 5, new Date('2026-10-07T21:02:00Z'));
+    assert.equal(wait, (2 * 3600 + 48 * 60 + 60) * 1000, '22:02 → 00:50 BST is 2h48m, plus margin');
+  });
+
+  it('does not cap a weekly or unnamed reset many hours away', () => {
+    const generic = calculateWaitMs(parseResetTime('Claude usage limit reached · resets 12:50am (Europe/London)'), 60, 5, LONDON_1012);
+    assert.ok(generic > 14 * 3600_000, 'an unnamed window keeps the next-occurrence wait');
+    const weekly = calculateWaitMs(parseResetTime("You've hit your weekly limit · resets Oct 9 at 6am (Europe/London)"), 60, 5, LONDON_1012);
+    assert.ok(weekly > 19 * 3600_000);
+  });
+});
