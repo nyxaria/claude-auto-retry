@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The wait after a usage-limit reset is now a random 60–600 s instead of a flat 60 s.**
+  Each wait picks a margin between `marginSeconds` and the new `marginMaxSeconds` (default
+  600), so sessions sharing a limit don't all retry the second it resets. Set the two equal
+  for the old fixed margin. Overload, safeguard and stream-interrupted retries are unchanged.
+
 ### Fixed
 - **Ctrl+Z no longer kills the pane of a session the launcher created.** Claude Code
   handles ctrl+z itself: its tty is in raw mode, so `stty susp undef` never applies. It

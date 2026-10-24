@@ -184,6 +184,7 @@ Optional. Create `~/.claude-auto-retry.json`:
   "maxRetries": 5,
   "pollIntervalSeconds": 5,
   "marginSeconds": 60,
+  "marginMaxSeconds": 600,
   "fallbackWaitHours": 5,
   "retryMessage": "Continue where you left off. The previous attempt was rate limited.",
   "customPatterns": ["my custom pattern"]
@@ -194,7 +195,8 @@ Optional. Create `~/.claude-auto-retry.json`:
 |--------|---------|-------------|
 | `maxRetries` | `5` | Max retry attempts per rate-limit event |
 | `pollIntervalSeconds` | `5` | How often to check the terminal (seconds) |
-| `marginSeconds` | `60` | Extra wait after reset time (seconds) |
+| `marginSeconds` | `60` | Minimum extra wait after reset time (seconds) |
+| `marginMaxSeconds` | `600` | Maximum extra wait after reset time; each wait picks a random margin between the two (set equal to `marginSeconds` for a fixed margin) |
 | `fallbackWaitHours` | `5` | Wait time if reset time can't be parsed |
 | `retryMessage` | `"Continue where..."` | Message sent to Claude on retry |
 | `customPatterns` | `[]` | Additional regex patterns to detect rate limits |

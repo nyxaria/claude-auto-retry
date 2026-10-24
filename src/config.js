@@ -117,7 +117,10 @@ export const DEFAULT_NEAR_LIMIT_WRAP_UP = {
 export const DEFAULT_CONFIG = {
   maxRetries: 5,
   pollIntervalSeconds: 5,
+  // The wait past a reset is a random margin in [marginSeconds, marginMaxSeconds], picked
+  // per wait, so sessions sharing a limit don't all retry the same second it resets.
   marginSeconds: 60,
+  marginMaxSeconds: 600,
   fallbackWaitHours: 5,
   // How long Claude Code's transcript must sit scrolled up, untouched, before the monitor
   // jumps it back to the bottom. While scrolled the live tail is off screen and nothing can
@@ -218,6 +221,8 @@ function validate(cfg) {
   cfg.maxRetries = validNumber(cfg.maxRetries, 1, DEFAULT_CONFIG.maxRetries);
   cfg.pollIntervalSeconds = validNumber(cfg.pollIntervalSeconds, 1, DEFAULT_CONFIG.pollIntervalSeconds);
   cfg.marginSeconds = validNumber(cfg.marginSeconds, 0, DEFAULT_CONFIG.marginSeconds);
+  cfg.marginMaxSeconds = Math.max(cfg.marginSeconds,
+    validNumber(cfg.marginMaxSeconds, 0, DEFAULT_CONFIG.marginMaxSeconds));
   cfg.fallbackWaitHours = validNumber(cfg.fallbackWaitHours, 0.1, DEFAULT_CONFIG.fallbackWaitHours);
   cfg.scrolledUpGraceSeconds = validNumber(cfg.scrolledUpGraceSeconds, 0, DEFAULT_CONFIG.scrolledUpGraceSeconds);
   cfg.idleSnapshotMinutes = validNumber(cfg.idleSnapshotMinutes, 0, DEFAULT_CONFIG.idleSnapshotMinutes);
@@ -242,6 +247,14 @@ function validate(cfg) {
   cfg.streamInterrupted = validateBoundedRetry(cfg.streamInterrupted, DEFAULT_STREAM_INTERRUPTED);
   cfg.nearLimitWrapUp = validateNudge(cfg.nearLimitWrapUp, DEFAULT_NEAR_LIMIT_WRAP_UP);
   return cfg;
+}
+
+// One draw of the post-reset margin (see marginMaxSeconds). A max below the min (an
+// unvalidated config) collapses the range to marginSeconds.
+export function pickMarginSeconds(config, rand = Math.random) {
+  const lo = config.marginSeconds;
+  const hi = Math.max(lo, config.marginMaxSeconds ?? lo);
+  return lo + rand() * (hi - lo);
 }
 
 export async function loadConfig(path = CONFIG_PATH) {

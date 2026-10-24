@@ -8,7 +8,7 @@ import { randomBytes } from 'node:crypto';
 import { getCurrentPane, buildSetWindowOptionArgs } from './tmux.js';
 import { isRateLimited } from './patterns.js';
 import { parseResetTime, calculateWaitMs } from './time-parser.js';
-import { loadConfig } from './config.js';
+import { loadConfig, pickMarginSeconds } from './config.js';
 import { createAccountReader, ACCOUNT_SETTLE_MS } from './account.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -342,7 +342,7 @@ async function launchPrintMode(args) {
     }
 
     const parsed = parseResetTime(combined);
-    const waitMs = calculateWaitMs(parsed, config.marginSeconds, config.fallbackWaitHours);
+    const waitMs = calculateWaitMs(parsed, pickMarginSeconds(config), config.fallbackWaitHours);
 
     process.stderr.write(`[claude-auto-retry] Rate limited. Waiting ${Math.round(waitMs / 1000)}s before retry ${retries}/${config.maxRetries}...\n`);
     if (await waitForResetOrSwitch(waitMs, startAccount, { readAccount }) === 'switched') {

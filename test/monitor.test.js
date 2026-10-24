@@ -154,14 +154,16 @@ describe('processOneTick', () => {
     '  2. Stop and wait for limit to reset',
     'Enter to confirm · Esc to cancel',
   ].join('\n');
-  const marginish = () => Date.now() + (DEFAULT_CONFIG.marginSeconds + 5) * 1000;
+  const marginish = () => Date.now() + (DEFAULT_CONFIG.marginMaxSeconds + 5) * 1000;
 
   it('menu with no reset line commits the fallback and latches it as correctable', async () => {
     const t = mockTmux(MENU_NO_RESET);
     const s = createMonitorState();
     assert.equal(await processOneTick(s, t, '%0', DEFAULT_CONFIG, () => true), 'menu-confirmed');
     assert.equal(s._waitIsFallback, true);
-    assert.ok(Math.abs((s.waitUntil - Date.now()) - FALLBACK_MS) < 5000,
+    const spreadMs = (DEFAULT_CONFIG.marginMaxSeconds - DEFAULT_CONFIG.marginSeconds) * 1000;
+    const got = s.waitUntil - Date.now();
+    assert.ok(got > FALLBACK_MS - 5000 && got < FALLBACK_MS + spreadMs + 5000,
       `expected the fallback, got ${Math.round((s.waitUntil - Date.now()) / 1000)}s`);
   });
 
@@ -311,7 +313,8 @@ describe('processOneTick', () => {
   // Seconds from now to the wake-up, against an expected offset with a few minutes' slack.
   const assertWaitNear = (s, ms) => {
     const delta = s.waitUntil - Date.now();
-    assert.ok(Math.abs(delta - ms) < 5 * 60_000, `expected ~${Math.round(ms / 1000)}s, got ${Math.round(delta / 1000)}s`);
+    // ±5min of banner rounding, plus up to the random post-reset margin.
+    assert.ok(delta - ms > -5 * 60_000 && delta - ms < 5 * 60_000 + DEFAULT_CONFIG.marginMaxSeconds * 1000, `expected ~${Math.round(ms / 1000)}s, got ${Math.round(delta / 1000)}s`);
   };
 
   it('lengthens a menu fallback to a dated reset days away', async () => {
@@ -386,7 +389,7 @@ describe('processOneTick', () => {
   });
 
   it('sends immediately when the corrected wait has already elapsed', async () => {
-    const cfg = { ...DEFAULT_CONFIG, marginSeconds: 0 };
+    const cfg = { ...DEFAULT_CONFIG, marginSeconds: 0, marginMaxSeconds: 0 };
     const t = mockTmux(bannerAt(-30 * 60_000));
     const s = createMonitorState();
     s.status = 'waiting'; s.waitUntil = Date.now() + FALLBACK_MS; s._waitIsFallback = true;
@@ -398,7 +401,7 @@ describe('processOneTick', () => {
     // correctUsageWait used to stash the banner on state regardless of which branch won;
     // a tick that fell through to 'retried' left it there for the next 'waiting' tick to
     // report as a brand-new rate limit. Set-with-clear is the invariant.
-    const cfg = { ...DEFAULT_CONFIG, marginSeconds: 0 };
+    const cfg = { ...DEFAULT_CONFIG, marginSeconds: 0, marginMaxSeconds: 0 };
     const t = mockTmux(bannerAt(-30 * 60_000));
     const s = createMonitorState();
     s.status = 'waiting'; s.waitUntil = Date.now() + FALLBACK_MS; s._waitIsFallback = true;
@@ -612,7 +615,7 @@ describe('processOneTick', () => {
     assert.equal(await processOneTick(s, t, '%0', DEFAULT_CONFIG, () => true), 'waiting');
     const expected = DEFAULT_CONFIG.fallbackWaitHours * 3600_000;
     const delta = s.waitUntil - Date.now();
-    assert.ok(Math.abs(delta - expected) < 120_000, `wait ${delta}ms not ≈ fallback ${expected}ms`);
+    assert.ok(delta > expected && delta < expected + (DEFAULT_CONFIG.marginMaxSeconds + 60) * 1000, `wait ${delta}ms not ≈ fallback ${expected}ms`);
     assert.equal(s._waitIsFallback, true);
   });
 

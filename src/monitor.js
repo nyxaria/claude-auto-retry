@@ -1,7 +1,7 @@
 import { stripAnsi, isRateLimited, findRateLimitMessage, isRateLimitOptionsPrompt, menuStepsToWaitOption, detectOverload, overloadMatch, detectSafeguard, safeguardMatch, detectStreamInterrupted, streamInterruptedMatch, nearLimitWrapUpMatch, scrolledUpView, isWorking, isInternalRetry, resumedAfterLimit } from './patterns.js';
 import { parseResetTime, calculateWaitMs } from './time-parser.js';
 import { capturePane, sendKeys, sendKey, getPaneCommand, isProcessForeground } from './tmux.js';
-import { loadConfig } from './config.js';
+import { loadConfig, pickMarginSeconds } from './config.js';
 import { createLogger } from './logger.js';
 import { readStopFailureEvent, clearStopFailureEvent, isRetryableError } from './events.js';
 import { writeStatus, clearStatus, sweepStaleStatus } from './status-file.js';
@@ -109,8 +109,9 @@ async function checkForeground(tmuxAdapter, pane, config) {
 function usageWaitUntil(stripped, config) {
   const message = findRateLimitMessage(stripped, config.customPatterns, RATE_LIMIT_TAIL_LINES);
   const parsed = message ? parseResetTime(message) : null;
-  const until = Date.now() + calculateWaitMs(parsed, config.marginSeconds, config.fallbackWaitHours);
-  return { message, parsed, until };
+  const marginMs = pickMarginSeconds(config) * 1000;
+  const until = Date.now() + calculateWaitMs(parsed, marginMs / 1000, config.fallbackWaitHours);
+  return { message, parsed, until, marginMs };
 }
 
 // `fresh` starts a new retry episode: attempts and the give-up flag are cleared. Used by
@@ -368,7 +369,7 @@ export async function processOneTick(state, tmuxAdapter, pane, config, isAlive, 
     // it — and re-arm a monitor that had given up, so it retries when the reset comes.
     // A reset already passed parses to the margin alone and falls through to the retry.
     const live = usageWaitUntil(stripped, config);
-    if (live.parsed && live.until - Date.now() > config.marginSeconds * 1000 + RETRY_COOLDOWN_MS) {
+    if (live.parsed && live.until - Date.now() > live.marginMs + RETRY_COOLDOWN_MS) {
       return enterUsageWait(state, stripped, config, { fresh: true, wait: live });
     }
 

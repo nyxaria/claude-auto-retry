@@ -19,7 +19,7 @@ describe('print-mode retry re-feeds piped stdin', () => {
     await mkdir(join(dir, 'home'), { recursive: true });
     // Instant retry: relative reset "0 minutes" + no margin.
     await writeFile(join(dir, 'home', '.claude-auto-retry.json'),
-      JSON.stringify({ marginSeconds: 0, maxRetries: 2 }));
+      JSON.stringify({ marginSeconds: 0, marginMaxSeconds: 0, maxRetries: 2 }));
     // Stub claude: consumes stdin like the real `claude -p`. Run 1 prints a rate-limit
     // banner; run 2 echoes what it received on stdin.
     await writeFile(join(dir, 'claude'), [

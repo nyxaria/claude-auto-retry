@@ -1,12 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadConfig, DEFAULT_CONFIG } from '../src/config.js';
+import { loadConfig, DEFAULT_CONFIG, pickMarginSeconds } from '../src/config.js';
 
 describe('DEFAULT_CONFIG', () => {
   it('has expected defaults', () => {
     assert.equal(DEFAULT_CONFIG.maxRetries, 5);
     assert.equal(DEFAULT_CONFIG.pollIntervalSeconds, 5);
     assert.equal(DEFAULT_CONFIG.marginSeconds, 60);
+    assert.equal(DEFAULT_CONFIG.marginMaxSeconds, 600);
     assert.equal(DEFAULT_CONFIG.fallbackWaitHours, 5);
     assert.equal(typeof DEFAULT_CONFIG.retryMessage, 'string');
     assert.deepEqual(DEFAULT_CONFIG.customPatterns, []);
@@ -75,5 +76,29 @@ describe('loadConfig', () => {
       assert.equal(config.maxRetries, 5);
       assert.equal(config.marginSeconds, 60);
     } finally { await unlink(f); }
+  });
+  it('clamps marginMaxSeconds up to marginSeconds', async () => {
+    const { writeFile, unlink } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const f = join(tmpdir(), `car-test-${Date.now()}.json`);
+    await writeFile(f, JSON.stringify({ marginSeconds: 900, marginMaxSeconds: 120 }));
+    try {
+      const config = await loadConfig(f);
+      assert.equal(config.marginMaxSeconds, 900);
+    } finally { await unlink(f); }
+  });
+});
+
+describe('pickMarginSeconds', () => {
+  it('draws uniformly between marginSeconds and marginMaxSeconds', () => {
+    const cfg = { marginSeconds: 60, marginMaxSeconds: 600 };
+    assert.equal(pickMarginSeconds(cfg, () => 0), 60);
+    assert.equal(pickMarginSeconds(cfg, () => 0.5), 330);
+    assert.ok(pickMarginSeconds(cfg, () => 0.999999) < 600);
+  });
+  it('is the fixed margin when the max is missing or below the min', () => {
+    assert.equal(pickMarginSeconds({ marginSeconds: 60 }, () => 0.7), 60);
+    assert.equal(pickMarginSeconds({ marginSeconds: 60, marginMaxSeconds: 10 }, () => 0.7), 60);
   });
 });
