@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadConfig, DEFAULT_CONFIG, pickMarginSeconds } from '../src/config.js';
+import { loadConfig, DEFAULT_CONFIG, pickMarginSeconds, pickRetryDelaySeconds } from '../src/config.js';
 
 describe('DEFAULT_CONFIG', () => {
   it('has expected defaults', () => {
@@ -100,5 +100,26 @@ describe('pickMarginSeconds', () => {
   it('is the fixed margin when the max is missing or below the min', () => {
     assert.equal(pickMarginSeconds({ marginSeconds: 60 }, () => 0.7), 60);
     assert.equal(pickMarginSeconds({ marginSeconds: 60, marginMaxSeconds: 10 }, () => 0.7), 60);
+  });
+});
+
+describe('pickRetryDelaySeconds', () => {
+  it('draws between retryDelaySeconds and retryDelayMaxSeconds', () => {
+    const block = { retryDelaySeconds: 5, retryDelayMaxSeconds: 120 };
+    assert.equal(pickRetryDelaySeconds(block, () => 0), 5);
+    assert.equal(pickRetryDelaySeconds(block, () => 0.5), 62.5);
+  });
+  it('defaults both seconds-scale families to 5-120s, max clamped up to the min', async () => {
+    const { writeFile, unlink } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const f = join(tmpdir(), `car-test-${Date.now()}.json`);
+    await writeFile(f, JSON.stringify({ safeguard: { retryDelaySeconds: 200 } }));
+    try {
+      const config = await loadConfig(f);
+      assert.equal(config.safeguard.retryDelayMaxSeconds, 200);
+      assert.equal(config.streamInterrupted.retryDelaySeconds, 5);
+      assert.equal(config.streamInterrupted.retryDelayMaxSeconds, 120);
+    } finally { await unlink(f); }
   });
 });

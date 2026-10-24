@@ -102,11 +102,12 @@ describe('processOneTick — safeguard path', () => {
   it('enters the safeguard wait on detection (no send yet)', async () => {
     const t = mockTmux(FLAG);
     const s = createMonitorState();
-    const r = await processOneTick(s, t, '%0', cfg(), () => true);
+    const r = await processOneTick(s, t, '%0', cfg(), () => true, () => 0.5);   // mid-range draw
     assert.equal(r, 'safeguard-detected');
     assert.equal(s.status, 'safeguard');
     assert.equal(t._sent.length, 0);
-    assert.ok(near(s.safeguardWaitUntil - Date.now(), DEFAULT_SAFEGUARD.retryDelaySeconds * 1000));
+    const { retryDelaySeconds: lo, retryDelayMaxSeconds: hi } = DEFAULT_SAFEGUARD;
+    assert.ok(near(s.safeguardWaitUntil - Date.now(), (lo + (hi - lo) / 2) * 1000));
   });
 
   it('sends the retry once the delay elapses', async () => {

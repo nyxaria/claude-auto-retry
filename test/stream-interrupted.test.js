@@ -193,11 +193,12 @@ describe('processOneTick — interrupted-stream path', () => {
   it('enters the wait on detection (no send yet)', async () => {
     const t = mockTmux(SLEPT);
     const s = createMonitorState();
-    const r = await processOneTick(s, t, '%0', cfg(), () => true);
+    const r = await processOneTick(s, t, '%0', cfg(), () => true, () => 0.5);   // mid-range draw
     assert.equal(r, 'interrupted-detected');
     assert.equal(s.status, 'interrupted');
     assert.equal(t._sent.length, 0);
-    assert.ok(near(s.interruptedWaitUntil - Date.now(), DEFAULT_STREAM_INTERRUPTED.retryDelaySeconds * 1000));
+    const { retryDelaySeconds: lo, retryDelayMaxSeconds: hi } = DEFAULT_STREAM_INTERRUPTED;
+    assert.ok(near(s.interruptedWaitUntil - Date.now(), (lo + (hi - lo) / 2) * 1000));
   });
 
   it('sends the resume message once the delay elapses', async () => {

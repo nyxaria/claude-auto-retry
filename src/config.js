@@ -60,7 +60,10 @@ export const DEFAULT_SAFEGUARD = {
     "legal/aup",                             // the AUP link Anthropic includes
   ],
   maxRetries: 3,          // small — if it keeps flagging, retrying won't help
-  retryDelaySeconds: 8,   // brief pause between re-sends (semi-random flag; quick retry helps)
+  // Pause between re-sends: a random draw in [retryDelaySeconds, retryDelayMaxSeconds], so
+  // sessions flagged together don't re-send in lockstep.
+  retryDelaySeconds: 5,
+  retryDelayMaxSeconds: 120,
   retryMessage: 'continue',
 };
 
@@ -95,7 +98,11 @@ export const DEFAULT_STREAM_INTERRUPTED = {
     'Server error mid-response',
   ],
   maxRetries: 2,          // small — if resuming keeps truncating, something else is wrong
-  retryDelaySeconds: 5,   // let the network settle after a wake before typing
+  // Let the network settle after a wake before typing. A random draw in [retryDelaySeconds,
+  // retryDelayMaxSeconds]: a wake interrupts every session at once, and a burst of resumes
+  // into a network that isn't back yet spends their small retry budget together.
+  retryDelaySeconds: 5,
+  retryDelayMaxSeconds: 120,
   retryMessage: 'continue',
 };
 
@@ -201,6 +208,8 @@ function validateBoundedRetry(raw, defaults) {
   b.patterns = validPatterns(b.patterns, defaults.patterns);
   b.maxRetries = validNumber(b.maxRetries, 1, defaults.maxRetries);
   b.retryDelaySeconds = validNumber(b.retryDelaySeconds, 1, defaults.retryDelaySeconds);
+  b.retryDelayMaxSeconds = Math.max(b.retryDelaySeconds,
+    validNumber(b.retryDelayMaxSeconds, 1, defaults.retryDelayMaxSeconds));
   if (typeof b.retryMessage !== 'string' || !b.retryMessage) {
     b.retryMessage = defaults.retryMessage;
   }
@@ -249,12 +258,20 @@ function validate(cfg) {
   return cfg;
 }
 
-// One draw of the post-reset margin (see marginMaxSeconds). A max below the min (an
-// unvalidated config) collapses the range to marginSeconds.
+// One uniform draw in [lo, hi]. A missing hi, or one below lo (an unvalidated config),
+// collapses the range to lo.
+function pickBetween(lo, hi, rand) {
+  return lo + rand() * (Math.max(lo, hi ?? lo) - lo);
+}
+
+// The post-reset margin (see marginMaxSeconds).
 export function pickMarginSeconds(config, rand = Math.random) {
-  const lo = config.marginSeconds;
-  const hi = Math.max(lo, config.marginMaxSeconds ?? lo);
-  return lo + rand() * (hi - lo);
+  return pickBetween(config.marginSeconds, config.marginMaxSeconds, rand);
+}
+
+// The pause before a safeguard / streamInterrupted re-send (see validateBoundedRetry).
+export function pickRetryDelaySeconds(block, rand = Math.random) {
+  return pickBetween(block.retryDelaySeconds, block.retryDelayMaxSeconds, rand);
 }
 
 export async function loadConfig(path = CONFIG_PATH) {

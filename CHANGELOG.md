@@ -11,7 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The wait after a usage-limit reset is now a random 60–600 s instead of a flat 60 s.**
   Each wait picks a margin between `marginSeconds` and the new `marginMaxSeconds` (default
   600), so sessions sharing a limit don't all retry the second it resets. Set the two equal
-  for the old fixed margin. Overload, safeguard and stream-interrupted retries are unchanged.
+  for the old fixed margin. Overload retries are unchanged.
+- **Safeguard and stream-interrupted retries wait a random 5–120 s** (was a flat 8 s and
+  5 s). A laptop waking interrupts every session at once, and their resumes no longer land
+  in one burst before the network is back. Set via `retryDelaySeconds` /
+  `retryDelayMaxSeconds` in each block.
 
 ### Fixed
 - **Ctrl+Z no longer kills the pane of a session the launcher created.** Claude Code

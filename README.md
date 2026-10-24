@@ -412,7 +412,8 @@ Configured under a `safeguard` block (defaults shown):
     "enabled": true,
     "patterns": ["safeguards flagged this message", "can't respond to this request with", "legal/aup"],
     "maxRetries": 3,
-    "retryDelaySeconds": 8,
+    "retryDelaySeconds": 5,
+    "retryDelayMaxSeconds": 120,
     "retryMessage": "continue"
   }
 }
@@ -423,7 +424,8 @@ Configured under a `safeguard` block (defaults shown):
 | `enabled` | `true` | Turn the safeguard-retry path on/off |
 | `patterns` | (see above) | Case-insensitive regexes marking the safeguard render (matched in the pane tail, near an `API Error` line) |
 | `maxRetries` | `3` | Re-send attempts before giving up — kept small; retrying a sticky flag won't help |
-| `retryDelaySeconds` | `8` | Wait between re-sends |
+| `retryDelaySeconds` | `5` | Minimum wait between re-sends |
+| `retryDelayMaxSeconds` | `120` | Maximum wait; each re-send waits a random time between the two |
 | `retryMessage` | `"continue"` | Message sent to nudge past the flag |
 
 Usage limits always take precedence; the safeguard path only acts when Claude is idle
@@ -467,6 +469,7 @@ Configured under a `streamInterrupted` block (defaults shown):
     "patterns": ["went to sleep mid-response", "Connection lost mid-response", "…"],
     "maxRetries": 2,
     "retryDelaySeconds": 5,
+    "retryDelayMaxSeconds": 120,
     "retryMessage": "continue"
   }
 }
@@ -477,7 +480,8 @@ Configured under a `streamInterrupted` block (defaults shown):
 | `enabled` | `true` | Turn the interrupted-stream path on/off |
 | `patterns` | (all 7 renders) | Case-insensitive regexes, matched only against a line that *begins* with the `API Error:` render |
 | `maxRetries` | `2` | Resume attempts before giving up loudly |
-| `retryDelaySeconds` | `5` | Wait before resuming — lets the network settle after a wake |
+| `retryDelaySeconds` | `5` | Minimum wait before resuming — lets the network settle after a wake |
+| `retryDelayMaxSeconds` | `120` | Maximum wait; each resume waits a random time between the two, so sessions interrupted together don't resume in a burst |
 | `retryMessage` | `"continue"` | Message sent to pick the work back up |
 
 Usage limits take precedence, and like the safeguard path this only acts when Claude is
@@ -566,7 +570,7 @@ It prints:
 | Actively monitoring | `🟢AR` |
 | Waiting on a usage-limit reset | `⏳AR 1h30m` |
 | Backing off from overload | `🟠AR 45s` |
-| Retrying past a safeguard/AUP false-positive | `🛡AR 8s` |
+| Retrying past a safeguard/AUP false-positive | `🛡AR 42s` |
 | Given up — max retries/backoff cap reached; no further automatic action on this pane | `🔴AR` |
 | No monitor for this pane, or the status file is stale (monitor process died without cleaning up) | *(nothing)* |
 

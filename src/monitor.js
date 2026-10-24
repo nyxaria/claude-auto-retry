@@ -1,7 +1,7 @@
 import { stripAnsi, isRateLimited, findRateLimitMessage, isRateLimitOptionsPrompt, menuStepsToWaitOption, detectOverload, overloadMatch, detectSafeguard, safeguardMatch, detectStreamInterrupted, streamInterruptedMatch, nearLimitWrapUpMatch, scrolledUpView, isWorking, isInternalRetry, resumedAfterLimit } from './patterns.js';
 import { parseResetTime, calculateWaitMs } from './time-parser.js';
 import { capturePane, sendKeys, sendKey, getPaneCommand, isProcessForeground } from './tmux.js';
-import { loadConfig, pickMarginSeconds } from './config.js';
+import { loadConfig, pickMarginSeconds, pickRetryDelaySeconds } from './config.js';
 import { createLogger } from './logger.js';
 import { readStopFailureEvent, clearStopFailureEvent, isRetryableError } from './events.js';
 import { writeStatus, clearStatus, sweepStaleStatus } from './status-file.js';
@@ -563,7 +563,7 @@ export async function processOneTick(state, tmuxAdapter, pane, config, isAlive, 
 
     // Increment + schedule BEFORE send so a send failure still consumes the slot.
     state.safeguardAttempts++;
-    state.safeguardWaitUntil = Date.now() + (safeguard.retryDelaySeconds * 1000);
+    state.safeguardWaitUntil = Date.now() + pickRetryDelaySeconds(safeguard, rand) * 1000;
     await tmuxAdapter.sendKeys(pane, safeguard.retryMessage);
     return 'safeguard-retried';
   }
@@ -614,7 +614,7 @@ export async function processOneTick(state, tmuxAdapter, pane, config, isAlive, 
 
     // Increment + schedule BEFORE send so a send failure still consumes the slot.
     state.interruptedAttempts++;
-    state.interruptedWaitUntil = Date.now() + (interrupted.retryDelaySeconds * 1000);
+    state.interruptedWaitUntil = Date.now() + pickRetryDelaySeconds(interrupted, rand) * 1000;
     await tmuxAdapter.sendKeys(pane, interrupted.retryMessage);
     return 'interrupted-retried';
   }
@@ -721,7 +721,7 @@ export async function processOneTick(state, tmuxAdapter, pane, config, isAlive, 
     if (match) {
       resetSafeguard(state);
       state.status = 'safeguard';
-      state.safeguardWaitUntil = Date.now() + (safeguard.retryDelaySeconds * 1000);
+      state.safeguardWaitUntil = Date.now() + pickRetryDelaySeconds(safeguard, rand) * 1000;
       state._safeguardMatch = match;
       return 'safeguard-detected';
     }
@@ -736,7 +736,7 @@ export async function processOneTick(state, tmuxAdapter, pane, config, isAlive, 
     if (match) {
       resetInterrupted(state);
       state.status = 'interrupted';
-      state.interruptedWaitUntil = Date.now() + (interrupted.retryDelaySeconds * 1000);
+      state.interruptedWaitUntil = Date.now() + pickRetryDelaySeconds(interrupted, rand) * 1000;
       state._interruptedMatch = match;
       return 'interrupted-detected';
     }
@@ -915,14 +915,14 @@ export async function startMonitor(pane, pid) {
       if (result === 'overload-gave-up') await logger.warn(`Overload backoff cap reached (maxTotalWaitMinutes=${config.overload.maxTotalWaitMinutes}). Giving up — endpoint may be genuinely down (check status.claude.com). Will not retry until the error clears.`);
       if (result === 'safeguard-detected') {
         const m = state._safeguardMatch;
-        await logger.warn(`Safeguard/AUP flag detected${m ? ` [matched /${m.pattern}/ in: "${m.line}"]` : ''} — often a false positive. Will retry up to ${config.safeguard.maxRetries}x every ${config.safeguard.retryDelaySeconds}s.`);
+        await logger.warn(`Safeguard/AUP flag detected${m ? ` [matched /${m.pattern}/ in: "${m.line}"]` : ''} — often a false positive. Will retry up to ${config.safeguard.maxRetries}x every ${config.safeguard.retryDelaySeconds}–${config.safeguard.retryDelayMaxSeconds}s.`);
       }
       if (result === 'safeguard-retried') await logger.info(`Safeguard retry sent (attempt ${state.safeguardAttempts}/${config.safeguard.maxRetries}).`);
       if (result === 'safeguard-cleared') await logger.info('Safeguard flag cleared. Resuming normal monitoring.');
       if (result === 'safeguard-gave-up') await logger.warn(`Safeguard flag persisted after ${config.safeguard.maxRetries} retries. Giving up — the flag is likely sticky for this content/model; try /model to switch models or rephrase. Will not retry until it clears.`);
       if (result === 'interrupted-detected') {
         const m = state._interruptedMatch;
-        await logger.warn(`Interrupted stream detected${m ? ` [matched /${m.pattern}/ in: "${m.line}"]` : ''} — the turn was truncated and left at an idle prompt. Will resume up to ${config.streamInterrupted.maxRetries}x every ${config.streamInterrupted.retryDelaySeconds}s.`);
+        await logger.warn(`Interrupted stream detected${m ? ` [matched /${m.pattern}/ in: "${m.line}"]` : ''} — the turn was truncated and left at an idle prompt. Will resume up to ${config.streamInterrupted.maxRetries}x every ${config.streamInterrupted.retryDelaySeconds}–${config.streamInterrupted.retryDelayMaxSeconds}s.`);
       }
       if (result === 'interrupted-retried') await logger.info(`Resume sent after interrupted stream (attempt ${state.interruptedAttempts}/${config.streamInterrupted.maxRetries}).`);
       if (result === 'interrupted-cleared') await logger.info('Interrupted turn resumed. Back to normal monitoring.');
