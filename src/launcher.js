@@ -134,12 +134,20 @@ export function sweepStaleEnvSnapshots(dir = ENV_SNAPSHOT_DIR, maxAgeMs = 24 * 3
 // bypassed for panes started with an explicit command.
 // `node` is spelled as the launching process.execPath: with no env forwarded via tmux, a
 // pre-existing server's stale PATH must not decide whether the launcher can start.
-export function buildTmuxInnerCmd(launcherPath, args, env = process.env, envFilePath = null) {
+export function launchCwd() {
+  try { return process.cwd(); } catch { return null; }
+}
+
+// The command cds to the launching cwd itself: tmux 3.8 runs the pane in the SERVER's cwd
+// and ignores new-session -c when that cwd is unreadable (a server started from a shell
+// left in another user's home by `su`), and claude then exits with EACCES.
+export function buildTmuxInnerCmd(launcherPath, args, env = process.env, envFilePath = null, cwd = launchCwd()) {
+  const cd = cwd ? `cd ${shellEscape(cwd)}; ` : '';
   const escapedLauncher = shellEscape(launcherPath);
   const escapedArgs = args.map(a => shellEscape(a)).join(' ');
   const shell = env.SHELL || 'bash';
   const envPtr = envFilePath ? `CLAUDE_AUTO_RETRY_ENV_FILE=${shellEscape(envFilePath)} ` : '';
-  const launch = `${envPtr}CLAUDE_AUTO_RETRY_ACTIVE=1 CLAUDE_AUTO_RETRY_NO_SUSPEND=1 ${shellEscape(process.execPath)} ${escapedLauncher} ${escapedArgs}`;
+  const launch = `${cd}${envPtr}CLAUDE_AUTO_RETRY_ACTIVE=1 CLAUDE_AUTO_RETRY_NO_SUSPEND=1 ${shellEscape(process.execPath)} ${escapedLauncher} ${escapedArgs}`;
   if (env.CLAUDE_AUTO_RETRY_KEEP_SHELL) {
     return `${launch}; exec ${shellEscape(shell)}`;
   }
@@ -460,8 +468,13 @@ export function sessionNameIgnoredWarning(mode, fromFlag) {
 // lays out the same screen the monitor reads. An attaching client still resizes it.
 export const SESSION_WIDTH = 118;
 export const SESSION_HEIGHT = 32;
-export function buildNewSessionArgs(sessionName, innerCmd) {
-  return ['new-session', '-d', '-s', sessionName, '-x', String(SESSION_WIDTH), '-y', String(SESSION_HEIGHT), innerCmd];
+//
+// The session starts in the launching cwd (-c). Without it tmux 3.8 uses the SERVER's cwd,
+// so a server first started from an unreadable dir (e.g. a shell left there by `su`) made
+// every later claude refuse to start with EACCES, wherever it was launched from.
+export function buildNewSessionArgs(sessionName, innerCmd, cwd = launchCwd()) {
+  return ['new-session', '-d', '-s', sessionName, ...(cwd ? ['-c', cwd] : []),
+    '-x', String(SESSION_WIDTH), '-y', String(SESSION_HEIGHT), innerCmd];
 }
 
 // Session reaping (#69) means the tmux server now exits when the last claude session

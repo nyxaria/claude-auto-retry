@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, statSync, existsSync, readdirSync, utimesSync, chmodSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, statSync, existsSync, readdirSync, utimesSync, chmodSync, rmSync, mkdirSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -153,10 +153,22 @@ describe('env snapshot file (#68)', () => {
 
 describe('buildNewSessionArgs (#68)', () => {
   it('never puts env names or values on the argv, on any tmux version', () => {
-    const args = buildNewSessionArgs('s1', 'inner');
-    assert.deepEqual(args, ['new-session', '-d', '-s', 's1', '-x', '118', '-y', '32', 'inner']);
+    const args = buildNewSessionArgs('s1', 'inner', '/work');
+    assert.deepEqual(args, ['new-session', '-d', '-s', 's1', '-c', '/work', '-x', '118', '-y', '32', 'inner']);
     assert.ok(!args.includes('-e'));
     assert.ok(!args.some(a => a.includes('export ')));
+  });
+
+  // tmux 3.8 starts a -d session in the SERVER's cwd, not the client's. A server first
+  // started from a shell sitting in an unreadable dir (e.g. after `su`) made every later
+  // claude refuse to start with EACCES, whatever dir it was launched from.
+  it("starts the session in the launching cwd, not the tmux server's", () => {
+    const args = buildNewSessionArgs('s1', 'inner');
+    assert.equal(args[args.indexOf('-c') + 1], process.cwd());
+  });
+
+  it('omits -c when the cwd is unknown, leaving tmux to pick', () => {
+    assert.ok(!buildNewSessionArgs('s1', 'inner', null).includes('-c'));
   });
 });
 
@@ -247,6 +259,32 @@ describe('buildTmuxInnerCmd', () => {
   it('turns ctrl+z suspend off in the pane, where nothing could fg claude', () => {
     const cmd = buildTmuxInnerCmd('/path/launcher.js', [], { SHELL: '/bin/zsh' }, null);
     assert.ok(cmd.includes('CLAUDE_AUTO_RETRY_NO_SUSPEND=1 '), cmd);
+  });
+
+  // tmux 3.8 runs the pane in the SERVER's cwd and ignores new-session -c when that cwd is
+  // unreadable (a server started from a shell left in another user's home by `su`), so
+  // claude exited with EACCES wherever it was launched from. The command cds there itself.
+  it('cds to the launching cwd first, even when the pane starts somewhere unreadable', () => {
+    const root = mkdtempSync(join(tmpdir(), 'car-cwd-'));
+    const locked = join(root, 'locked', 'inner');
+    const target = join(root, 'launch dir');
+    mkdirSync(locked, { recursive: true });
+    mkdirSync(target);
+    const out = join(root, 'pwd.txt');
+    const cmd = buildTmuxInnerCmd('/path/launcher.js', [], {}, null, target)
+      .replace(/^(cd [^;]+;).*$/, `$1 /bin/pwd -P > '${out}'`);
+    try {
+      // Enter first, then lock the parent: the shell's cwd is now unreadable, as in the bug.
+      execFileSync('/bin/sh', ['-c', `cd '${locked}' && chmod 0 '${join(root, 'locked')}' && ${cmd}`]);
+    } finally {
+      chmodSync(join(root, 'locked'), 0o755);
+    }
+    assert.equal(readFileSync(out, 'utf8').trim(), realpathSync(target));
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('skips the cd when the launching cwd is unknown', () => {
+    assert.ok(!buildTmuxInnerCmd('/path/launcher.js', [], {}, null, null).startsWith('cd '));
   });
 
   it('omits the pointer when no snapshot could be written', () => {
